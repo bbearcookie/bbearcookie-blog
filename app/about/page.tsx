@@ -10,6 +10,10 @@ export default function Page() {
   const author = allAuthors.find((p) => p.slug === 'default') as Authors
   const mainContent = coreContent(author)
 
+  if (!author) {
+    return <>Author not found</>
+  }
+
   return (
     <>
       <AuthorLayout content={mainContent}>
