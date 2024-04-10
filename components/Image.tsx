@@ -1,5 +1,12 @@
 import NextImage, { ImageProps } from 'next/image'
 
-const Image = ({ ...rest }: ImageProps) => <NextImage className="mx-auto" {...rest} />
+const Image = ({ ...props }: ImageProps) => {
+  return (
+    <figure>
+      <NextImage className="mx-auto" {...props} />
+      <figcaption className="text-center">{props.alt}</figcaption>
+    </figure>
+  )
+}
 
 export default Image
