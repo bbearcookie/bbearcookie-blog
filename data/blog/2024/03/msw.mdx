@@ -1,0 +1,342 @@
+---
+title: MSW 2로 다양한 환경에서 API 모의하기
+date: '2024-03-03'
+lastmod: '2024-03-03'
+tags: ['msw']
+draft: false
+summary: MSW를 활용해서 브라우저, 노드, Storybook 등 다양한 환경에서 API를 모의하는 방법을 기록해보았습니다.
+---
+
+## 서론
+
+프론트엔드 개발을 하다 보면 로컬 환경에서 통신할 수 있는 개발용 API 서버를 마련하기 어려운 상황이거나, 병렬 개발로 인해 아직 실제 API 호출이 불가능한 상황에서 개발해야 하는 경우가 생기기도 합니다.
+
+이러한 경우에 간단하게 Mock 데이터만 만들어서 화면을 그리는 형태로 미리 작업을 해두는 방법도 있긴 한데요, 이 경우에는 두 가지 정도의 어려움이 발생하기도 합니다.
+
+1. 추후 API 통신을 연동하는 과정에서 추가 작업이 발생합니다.
+2. 개발 과정에서 Loading, Error와 같은 상태를 원활하게 테스트하기 쉽지 않습니다.
+
+그래서 실제 API를 활용하는 대신에 일종의 프록시 서버를 만들어서 사용하기도 하는데요.
+이번에는 [서비스 워커](https://developer.mozilla.org/ko/docs/Web/API/Service_Worker_API)를 통해 **네트워크 통신을 가로채서 모의 응답을 제공**하는 MSW를 사용했던 내용에 대해서 기록해보고자 합니다.
+
+## MSW 핸들러 작성
+
+각각의 API Path마다 어떤 동작을 수행하고 응답하도록 할 것인지를 핸들러를 통해 정의할 수 있습니다.
+
+하단의 코드가 그 예시인데요, 지금은 간단하게 작성해 보았지만 실제로 사용했을 땐 handler와 resolver를 각각 구조화해서 정리했습니다.
+
+```ts
+import { http, HttpResponse } from 'msw'
+
+export const handlers = [
+  http.get('/post', () => {
+    return HttpResponse.json({ content: '블로그 글 쓰기' })
+  }),
+  http.post('/post', () => {
+    return HttpResponse.json({ message: '새로운 글을 생성했어요' })
+  }),
+]
+```
+
+이제 이렇게 정의한 핸들러는 msw의 `setupWorker`나 `setupServer` API를 통해 등록할 수 있습니다.
+
+### 브라우저에서 활용
+
+브라우저에서는 서비스 워커를 통해서 MSW 핸들러를 처리합니다.  
+이는 [setupWorker API](https://mswjs.io/docs/api/setup-worker/start)를 사용해서 핸들러를 등록할 수 있습니다.
+
+```tsx
+// @/mocks/browser
+import { setupWorker } from 'msw/browser'
+import { handlers } from './handlers'
+
+const worker = setupWorker(...handlers)
+```
+
+이제 브라우저에서 화면을 렌더링하기 전에 worker를 먼저 실행하면 됩니다.
+
+```ts
+const enableMocking = async () => {
+  if (import.meta.env.VITE_MSW !== "on") {
+    return
+  }
+
+  const { worker } = await import("@/mocks/browser")
+
+  return worker.start({
+    onUnhandledRequest(request, print) {
+      if (SKIP_MSW_WARNING_URL.some(url => request.url.includes(url))) {
+        return
+      }
+
+      print.warning()
+    },
+  })
+}
+
+enableMocking().then(() =>
+  ReactDOM.createRoot(document.getElementById("root")!).render(<App />)
+)
+```
+
+> 💡 **VITE_MSW**  
+> [공식 문서](https://mswjs.io/docs/integrations/browser)에서는 NODE_ENV 값을 체크해서 로컬 개발 환경에서만 워커를 실행하도록 제안하고 있는데요,
+> 저는 로컬 개발 환경과 Vercel Preview 배포 환경 등 다양한 환경에서 msw를 사용하고 싶어서 환경 변수를 분리했습니다.
+
+> 💡 **onUnhandledRequest**  
+> msw는 모의되지 않은 API를 알려주기 위해서 네트워크 통신에 대해서 콘솔에 경고 메시지를 보여주는데요, 애셋 파일에 대한 네트워크 요청은 경고 메시지를 보여주지 않도록 일종의 화이트 리스트를 작성했습니다.
+
+#### 서비스 워커 등록
+
+지금까지는 msw 모의 핸들러를 만들고, 서비스 워커를 실행하는 구문을 작성했습니다.  
+하지만 아직 서비스 워커를 만들지는 않았는데요, [FetchEvent](https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent)를 가로채서 응답을 처리하는 서비스 워커를 추가로 작성해야 합니다.
+
+이런 부분은 수동으로 작성할 수도 있겠지만, 다행히 msw에서는 미리 정의된 서비스 워커를 손쉽게 추가할 수 있도록 [init 커맨드](https://mswjs.io/docs/cli/init)를 제공합니다.  
+예를 들어, 아래 커맨드를 입력하면 public 디렉토리에 서비스 워커 파일이 생성됩니다.
+
+```sh
+npx msw init ./public
+```
+
+이제 프론트엔드 개발 서버를 실행한 뒤 브라우저 환경에서 API 요청이 발생하면 모의 데이터를 응답할 것입니다!
+
+> 🚨 **주의**  
+> 서비스 워커를 사용하기 위해서는 HTTPS로 통신하거나, localhost 환경이어야합니다.
+
+### 노드 환경에서 활용
+
+서비스 워커는 브라우저에 존재하는 기능이기에, TestRunner와 같은 노드 환경에서는 사용할 수 없습니다.  
+그래서 MSW에서는 서비스 워커 대신 노드 서버를 실행할 수 있도록 [setupServer API](https://mswjs.io/docs/api/setup-server/)를 제공하고 있습니다.  
+공식 문서를 살펴보면 **서비스 워커를 실행할 수 없는 노드 환경에서 동일한 요청 핸들러를 적용하는 브리지 역할**을 한다고 합니다.
+
+```ts
+// @/mocks/node
+import { setupServer } from 'msw/node'
+import handlers from './handlers'
+
+export const server = setupServer(...handlers)
+```
+
+#### Vitest
+
+서버와 핸들러를 설정하는 구문을 작성했으니, 마찬가지로 서버를 실행해야 요청을 가로챌 수 있습니다.  
+[server.listen()](https://mswjs.io/docs/api/setup-server/listen) 으로 서버를 실행하며, [server.close()](https://mswjs.io/docs/api/setup-server/close) 로 서버를 종료할 수 있는데요,
+
+msw를 Vitest나 Jest와 같은 테스트 환경에서 사용한다고 한다면, 아래와 같이 모든 테스트 코드의 전후 동작에 대한 Setup and Teardown 설정을 할 수 있습니다.
+
+```ts
+// vitest.setup.js
+import { setupServer } from 'msw/node'
+import { handlers } from './handlers'
+
+const server = setupServer(...handlers)
+
+beforeAll(() => {
+  server.listen()
+})
+
+afterEach(() => {
+  server.resetHandlers()
+})
+
+afterAll(() => {
+  server.close()
+})
+```
+
+### 통합 테스트 작성
+
+이제 API에 의존하고 있는 대상에 대한 테스트 코드를 작성하면, 자동으로 msw 핸들러로 모킹한 모의 응답을 받게 됩니다.  
+그런데 테스트 코드에서 성공, 실패 케이스 등 비교해야 한다면 어떻게 해야할까요?
+
+이는 [server.use()](https://mswjs.io/docs/api/setup-server/use) 를 활용해서 테스트 코드 내에서 작동할 핸들러를 오버라이딩하여 처리할 수 있습니다.
+
+```ts
+import { http } from "msw"
+import { server } from "@/mocks/node"
+import { render, screen } from "@testing-library/react"
+
+it("[성공]", async () => {
+  render(<Nickname />)
+
+  expect(await screen.findByText("성공")).toBeInTheDocument()
+})
+
+it("[실패]", async () => {
+  server.use(
+    http.patch("/api/nickname", async () => {
+      return new HttpResponse("없는 사용자입니다.", {
+        status: 404,
+      })
+    })
+  )
+
+  render(<Nickname />)
+
+  expect(await screen.findByText("오류 발생")).toBeInTheDocument()
+})
+```
+
+예시 테스트 코드 자체가 검증하려는 내용은 큰 의미는 없지만, 이렇게 `server.use()` 로 특정 테스트 코드 스코프에서 API 핸들러의 내용을 덮어 씌울 수 있다는 것을 표현해 보았습니다.
+
+그런데 API 명세는 비즈니스 로직이 변화하면서 변경되기 쉬운 부분이라는 생각이 들었는데요, 각각의 API Path와 핸들러의 내용을 **테스트 코드마다 산재해서 작성해놓는 방식**은 변경에 대응하기에 좋지 않다는 생각이 들었습니다.
+
+그래서 API Path와 resolver를 한 곳에 구조화해서 작성했습니다.  
+아래는 실제 프로젝트에 적용했던 일부를 가져와보았습니다.
+
+#### API Path
+
+```ts
+export const API_PATHS = {
+  MEMBER: '/api/member',
+  MEMBER_NICKNAME: '/api/member/nickname',
+  MEMBER_BIRTHDAY: '/api/member/birthday',
+  MEMBER_GENDER: '/api/member/gender',
+  MEMBER_WORRY: '/api/member/worry',
+  MEMBER_SIGN_OUT: '/api/member/sign-out',
+} as const
+```
+
+#### API Resolver
+
+```ts
+export const memberResolvers = {
+  getMember: {
+    success: async () => {
+      await delay()
+      return HttpResponse.json(MemberInfo)
+    },
+
+    empty: async () => {
+      await delay()
+      return HttpResponse.json(EmptyMemberInfo)
+    },
+
+    notFound: async () => {
+      await delay()
+      return new HttpResponse(ERROR_RESPONSES.memberNotFound, {
+        status: 404,
+      })
+    },
+  },
+
+  patchMember: {
+    success: async () => {
+      await delay()
+      return HttpResponse.json()
+    },
+
+    notFound: async () => {
+      await delay()
+      return new HttpResponse(ERROR_RESPONSES.memberNotFound, {
+        status: 404,
+      })
+    },
+  },
+}
+```
+
+### API Handler
+
+```ts
+const memberHandler = [
+  http.get(baseURL(API_PATHS.MEMBER), memberResolvers.getMember.success),
+  http.patch(baseURL(API_PATHS.MEMBER), memberResolvers.patchMember.success),
+]
+```
+
+특정 상황을 표현하고 정해진 응답을 하는 resolver를 이렇게 정리해 놓으니, 테스트 코드에서 오버라이딩 할 때에도 이 resolver를 가져와서 사용하기만 하면 되고 추후에 API 명세에 변동이 생기더라도 이 resolver만 수정하면 됩니다.
+
+따라서 변경에 용이한 구조를 갖게 되었으며, 브라우저 환경에서도 성공이 아닌 다른 케이스의 실행 결과를 확인하고 싶을 때 단순하게 resolver만 교체해서 실행해볼 수 있었습니다.
+
+(각 resolver마다 delay 구문이 존재하는 등 반복되는 부분이 보이지만, 이런 부분은 resolver 내부에 코드 구문으로 존재해야 추후 다양한 케이스를 테스트해볼 때 값을 변경해서 실험해보는 유연함을 가질 수 있다고 생각했습니다.)
+
+## 고차 Resolver
+
+실제 API 통신 환경에서는 JWT 토큰을 HTTP 요청의 헤더에 담아서 사용자의 인가를 나타내는 형태로 되어 있었는데요, 대부분의 API에는 로그인이 되어 있지 않으면 에러 응답을 하는 공통적인 부분이 존재하기도 했습니다.  
+msw 모의 환경에서도 이 부분을 동일하게 처리하고 싶었는데, 그렇다보니 매 resolver마다 작성해야 하는 JWT 토큰 체크 로직이 반복되었습니다.
+
+그래서 이 부분은 [고차 resolver](https://mswjs.io/docs/recipes/higher-order-resolver)를 활용하는 방식으로 해결했습니다.
+
+```ts
+import { HttpResponse, type DefaultBodyType, type HttpResponseResolver, type PathParams } from 'msw'
+import STORAGE_KEYS from '@/constants/storageKeys'
+import { isValidToken } from '@/utils/mswUtils'
+import ERROR_RESPONSES from '@/constants/errorMessages'
+
+/** 로그인이 되어 있지 않다면 401 응답을 하는 미들웨어입니다. */
+function withAuth(
+  resolver: HttpResponseResolver<PathParams, DefaultBodyType, undefined>
+): HttpResponseResolver<PathParams, DefaultBodyType, undefined> {
+  return async (input) => {
+    const { request } = input
+
+    const accessToken = request.headers.get(STORAGE_KEYS.accessToken)
+
+    if (!isValidToken(accessToken)) {
+      return new HttpResponse(ERROR_RESPONSES.accessExpired, { status: 401 })
+    }
+
+    return resolver(input)
+  }
+}
+```
+
+이렇게 고차 resolver를 정의해놓으면, 핸들러를 사용할 때 resolver를 감싸주기만 하면 됩니다.
+
+```tsx
+const memberHandler = [
+  http.get(baseURL(API_PATHS.MEMBER), withAuth(memberResolvers.getMember.success)),
+]
+```
+
+## Storybook과의 통합
+
+msw로 모의 핸들러를 작성하다보니, Storybook에서도 실제 API 호출을 발생하도록 하는 것 보다는 모의 응답을 사용하는 것이 비용적으로 효율적이라는 생각이 들었는데요.  
+그래서 Storybook에도 `msw-storybook-addon` 라이브러리를 활용해서 msw의 응답을 사용할 수 있도록 연동했습니다.
+
+주의할 점은 msw 2버전 이상을 사용하고 있기 때문에 설치할 때 스토리북 애드온도 버전을 2로 설치해야 한다는 부분입니다. [관련 링크](https://github.com/mswjs/msw-storybook-addon/issues/121#issuecomment-1777192208)
+
+```sh
+npm i -D msw-storybook-addon@2.0.0--canary.122.b3ed3b1.0
+```
+
+이렇게 패키지를 설치한 뒤, `.storybook/preview.tsx` 에서 설정을 해주면 됩니다.
+
+```tsx
+import { initialize, mswLoader } from 'msw-storybook-addon'
+import handlers from '@/mocks/handlers'
+
+initialize({}, handlers)
+
+const preview: Preview = {
+  loaders: [mswLoader],
+}
+```
+
+## 후기
+
+이렇게 msw를 활용해서 API를 모의해보았는데, 사용해보니 와닿는 장점은 다음과 같았습니다.
+
+1. msw가 제공하는 인터페이스가 Express같은 노드 계열의 서버 프레임워크와 유사해서 쉽게 익히고 사용할 수 있었습니다.
+2. 모의 핸들러만 잘 작성해 놓는다면 브라우저, 프리뷰 배포, 스토리북, 테스트 러너 등 어디에서도 활용이 가능했습니다.
+3. 모의하지 않은 API는 실제 서버로 보내고, 모의한 API만 가상의 응답을 제공하는 등 유연하게 활용할 수 있었습니다.
+   - [passthrough](https://mswjs.io/docs/api/passthrough)와 [bypass](https://mswjs.io/docs/api/bypass)같은 기능을 활용한다면, 원하는 경우에는 실제 API를 호출하는 등 API 호출을 자유자재로 다룰 수 있습니다.
+
+## 더 고민해보면 좋을 부분
+
+### 모의 케이스 프리셋
+
+한 페이지에서 여러 API를 호출한다고 가정하면, 어떤 API에서는 성공 응답을 받고 싶으면서 다른 API에서는 실패 응답을 받아서 실행해보고 싶은 경우도 있을 것입니다.
+
+[우아콘 2023](https://www.youtube.com/watch?v=uiBCcmlJG4U&t=1273s)에서 MSG(Mock Service GUI)라는 도구를 만들어서 프리셋을 교체하면서 모의 데이터를 처리하는 방법도 있다는 것을 인상 깊게 보았는데요.
+
+제가 적용했던 방식은 개발자가 핸들러 내부에서 적용되는 resolver를 교체하는 방식이어서 소스 코드를 직접 수정해봐야 하는 불편함이 있습니다. 그래서 각 핸들러마다 어떤 resolver를 적용할 것인지를 일종의 JSON 형태의 프리셋으로 관리하는 방법도 있을까.. 싶은 고민을 해 보았는데 코드를 구조화하는 과정에 핸들러 작성이 더 복잡해지는 것 같아서 우선 적용해보지는 못했습니다.
+
+### Next.js
+
+Next.js 에서는 서버 환경에서 렌더링되는 컴포넌트도 존재하기 때문에, 서비스 워커를 사용하지 못하는 상황이 발생하게 됩니다.
+
+그래서 Route Handler 기능을 사용해서 프록시 서버를 구축하는 방법도 가능할 것 같은데, 이 경우에는 하나의 핸들러만 작성해 놓으면 다양한 환경에서 활용 가능하다는 msw의 장점을 살리지 못하게 되는 것 아닐까? 싶은 생각도 있습니다.
+
+브라우저 환경이라면 서비스 워커를 사용하고, 노드 환경이라면 노드 서버를 사용하는 방식으로 분기처리 할 방법이 있을지 고민되는데, 추후 Next.js 환경에서 msw를 적용해본다면 이어서 생각해보면 좋을 것 같습니다.

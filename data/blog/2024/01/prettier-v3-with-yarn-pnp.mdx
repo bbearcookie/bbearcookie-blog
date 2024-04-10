@@ -1,0 +1,81 @@
+---
+title: Prettier v3과 Yarn Berry의 호환성 문제
+date: '2024-01-09'
+lastmod: '2024-01-09'
+tags: ['issue', 'prettier', 'yarn berry']
+draft: false
+summary: Prettier v3와 Yarn Berry의 PnP 방식을 사용할 때 발생했던 호환성 문제
+---
+
+## 서론
+
+일반적으로 ESLint는 코딩 컨벤션에 대한 일관성을 지키거나 잘못된 문법으로 인한 오류를 방지하는 도구로, Prettier는 코드의 스타일을 유지하기 위해서 사용된다.  
+그런데 ESLint에도 `indent`, `semi` 처럼 코드의 스타일을 위한 규칙이 존재해서 Prettier를 함께 적용할 경우에 충돌이 발생하기도 한다.
+
+이 경우에는 `eslint-config-prettier` 로 충돌되는 **모든 ESLint의 rule를 끄는 방법**도 있고, `eslint-plugin-prettier` 로 **Prettier의 규칙을 모두 ESLint의 rule로 가져오는 방법**이 있다.
+
+나는 평소에 `eslint-plugin-prettier` 로 Prettier의 규칙을 모두 ESLint의 rule로 가져온 뒤, VSCode의 설정 중 `editor.codeActionsOnSave` 의 설정을 적용함으로써 **파일 저장시 자동으로 린트 오류를 fix하는 방식**으로 프로젝트의 환경을 구성해 왔었는데, 이번에 [Prettier 공식 문서](https://prettier.io/docs/en/integrating-with-linters)를 살펴보면서 권장하지 않는 방법이라는 것을 알게 되었다.
+
+그 이유는 크게 3가지로:
+
+1. 단순한 코드 스타일에 대한 문제는 오류가 아닌데도, ESLint 규칙으로 잡아버리면 빨간 선 혹은 주황색 선으로 표시된다는 게 신경쓰이게 된다.
+2. Prettier가 직접 코드 스타일을 잡아주는 것 보다 훨씬 느리다.
+3. 문제가 생길 수 있는 간접적인 계층일 수 있다.
+
+이건 내가 Tailwind CSS를 사용할 때 클래스 이름을 정렬하는 플러그인을 적용할 때 `prettier-plugin-tailwindcss` 를 사용할지, 아니면 `eslint-plugin-tailwindcss` 를 사용할지를 고민했을 때 해결책이 될 수 있을 거라고 생각했다.
+
+원래는 `eslint-plugin-tailwindcss` 로 ESLint 규칙을 추가하고, 파일 저장시 autoFix로 자동으로 정렬되도록 설정해 놓았는데, 방금 공식 문서의 내용대로라면 이런 방법보다는 **Prettier 플러그인을 통한 적용 방법이 더 유용**해보였다.
+
+그래서 이번에 Yarn Berry를 패키지 매니저로 사용하면서 Tailwind와 관련한 환경 설정을 다시 해보기로 결정했다.
+
+## 문제
+
+![Prettier 플러그인을 찾을 수 없음](/static/images/2024/01/prettier-v3-with-yarn-pnp/image.png)
+
+그런데 문제는.. Yarn Berry의 PnP 방식을 사용할 때 `prettier-plugin-tailwindcss` 플러그인을 가져올 수 없다는 문제가 있다는 것이었다.
+
+이래도 되는지 모르겠지만 우선 Yarn Bery가 의심스러워서 PnP 대신 node_module 을 사용하는 방법으로 `.yarnrc.yml` 설정을 바꿔줬는데.. 귀신같이 플러그인이 잘 적용되는 것이었다.. 😲
+
+## 해결책 찾기
+
+Yarn Berry의 PnP 방식과의 호환성 문제라는 것은 알았으니, 그럼 이제 어떻게 해결해야 할지 방법을 찾아야 한다.  
+우선 나와 비슷한 경험을 한 사람이 있지 않을까 싶어 `prettier-plugin-tailwindcss` 라이브러리 레포지토리의 이슈를 찾아갔더니 [동일한 이슈](https://github.com/tailwindlabs/prettier-plugin-tailwindcss/issues/237)를 겪은 사람이 있었다.
+
+이 이슈의 내용을 읽고 링크를 타고 들어가다가 [이 아티클](https://dev.to/javien/how-to-use-prettier-plugin-with-yarn-pnp-in-vscode-4pf8)을 발견하기도 했는데, 글의 내용대로 적용했더니 `prettier --write` 명령어로 파일에 직접 포맷팅을 하는 건 가능한데, VSCode의 파일 저장이 발생할 때 동작하도록 설정하는건 되지 않았다.
+
+## 문제 원인
+
+![https://prettier.io/blog/2023/07/05/3.0.0](/static/images/2024/01/prettier-v3-with-yarn-pnp/prettier-v3.png)
+
+[Prettier v3](https://prettier.io/blog/2023/07/05/3.0.0) 에서 ESM과 비동기 파서를 지원하는 업데이트가 적용되었으며, 각 플러그인 개발자들은 업데이트에 염두해두라는 내용을 발견했는데 Yarn Berry의 PnP 방식과는 호환이 되지 않는 것이 문제였다.. 😭
+
+패키지는 .zip 파일로 저장되어 있고 의존성 정보는 `pnp.cjs` 파일에서 관리되고 있지만.. Prettier 플러그인은 이걸 인식하지 못해서 발생하는 문제라는 듯 하다..
+
+두 라이브러리의 `CHANGELOG` 를 찾아보기도 하고.. 일일히 설치해보면서 PnP와 호환이 되는 버전을 찾아본 결과 적용할 수 있는 가장 최신 버전은 아래와 같았다:
+
+```json
+{
+  "devDependencies": {
+    "prettier": "^2.8.8",
+    "prettier-plugin-tailwindcss": "^0.4.1"
+  }
+}
+```
+
+그래서 어쩔 수 없이 구버전으로 적용하게 되었는데.. Yarn Berry의 PnP 방식을 포기하는 것 보다는 코드 스타일을 위한 Prettier의 최신 버전을 포기하는 것이 낫다는 판단에서였다.  
+물론 추후에 Yarn Berry와 호환이 잘 맞지 않는 라이브러리를 추가로 사용해야 한다면.. 그 때 가서 다시 고민해 볼 문제인듯 하다.
+
+## SDK 번외 및 후기
+
+Yarn Berry의 PnP 모드를 사용할 때에는 `Prettier` 나 `ESLint` 처럼 편집기에 대한 설정이 필요한 경우에는 반드시 SDK를 설치해줘야 한다.  
+그런데 SDK를 설치하거나 제거한 다음에는 반드시 **Reload Window**를 해주는게 좋다.
+
+왜냐하면.. 내가 정말 놓친 게 없을지 확인하기 위해서 `Prettier` 를 v3.1.1 로 설치하고 다시 시도를 해 봤다가, 안되는게 확실하길래 버전을 다운그레이드하고 SDK를 다시 설치했더니 SDK는 여전히 Prettier v3.1.1로 적용되고 있어서 삽질을 더 했던 경험이 있기 때문이다.
+
+흠.. Yarn Berry가 다루기에 까탈스러운 것 같기도 하고.. Zero-Install 이나 PnP 모드를 사용해보면서 확실히 npm보다 빠르고 편리하다고 느껴지긴 하는데 (특히 CI 환경에서 배포나 테스트 수행이 빠르다는 점)
+
+근데 뭔가 패키지 관련한 문제가 생기면 모든지 Yarn Berry 부터 의심이 가기도 하고, 패키지 관련 문제를 해결하는 데 괜한 시간을 뺏기는 것 같기도 하다. (아직 더 학습이 필요해서 그런걸지도 모르겠다.)
+
+## 참고 자료
+
+[prettier와 eslint를 구분해서 사용하자 - nana.log](https://yrnana.dev/post/2021-03-21-prettier-eslint/)
