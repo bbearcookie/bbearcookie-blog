@@ -105,9 +105,9 @@ export default async function Page({ params }: { params: { slug: string[] } }) {
       name: author.name,
     }
   })
-  const seriesContents = sortedCoreContents.filter(
-    (p) => p.series && p.series === mainContent.series
-  )
+  const seriesContents = sortedCoreContents
+    .filter((p) => p.series && p.series === mainContent.series)
+    .sort((a, b) => a.date.localeCompare(b.date))
 
   const Layout = layouts[post.layout || defaultLayout]
 

@@ -1,0 +1,482 @@
+---
+title: React 프로젝트를 S3에 배포하기
+date: '2023-10-22'
+lastmod: '2023-12-28'
+tags: ['aws', 'deployment']
+draft: false
+summary: React 프로젝트의 레포지토리가 변경되면 Github Actions로 S3에 자동 배포하는 워크플로를 작성하고, Cloudfront를 통해 캐싱하기
+series: AWS에 배포하기
+---
+
+AWS 인프라를 통해서 배포하는 과정을 학습했는데 몇 개의 포스트를 묶어서 FE와 BE의 배포 과정을 기록으로 남겨보고자 한다.
+
+마침 최근에 [로그인 관련 기능](https://github.com/bbearcookie/auth-playground/tree/deploy)을 FE + BE 전체적으로 구현했던 적이 있어서 이 프로젝트를 배포해보는 것이 목표이다. 최종적으로 `HTTPS` 프로토콜을 통한 통신이 가능하고, 깃헙 레포지토리에 변동사항이 발생하면 자동으로 빌드해서 새롭게 배포하는 결과를 얻을 수 있을 것이다.
+
+## 도메인 생성
+
+freenom 같은 무료 도메인 서비스도 있지만, 이번에 가비아에서 도메인 조회를 해보니 1900원이면 구매할 수 있어서 그냥 가비아에서 구매했다.
+
+## Route53 설정
+
+Route 53은 AWS 에서 제공하는 DNS 서비스이다.
+여기에서 직접 도메인을 구매할 수도 있는데, 우리는 가비아에서 구매한 외부 도메인이 존재하기 때문에 AWS에서 우리의 도메인을 이용할 수 있도록 호스팅 영역을 등록해야 한다.
+
+### 1. Route53 대시보드
+
+![Route53 대시보드](/static/images/2023/10/aws-deployment-1/image-5.png)
+
+상단의 헤더에 Route를 검색해서 Route 53에 들어가자.
+
+### 2. 호스팅 영역
+
+![호스팅 영역](/static/images/2023/10/aws-deployment-1/image-3.png)
+
+![호스팅 영역 생성](/static/images/2023/10/aws-deployment-1/image-6.png)
+
+왼쪽의 사이드바에서 호스팅 영역을 클릭하고, 호스팅 영역 생성 버튼을 누르자.
+
+### 3. 도메인 이름
+
+![도메인 이름](/static/images/2023/10/aws-deployment-1/image-7.png)
+
+도메인 이름에 우리 도메인의 이름을 적어준다. 그 외의 정보는 기본 값을 그대로 사용한다.
+
+#### 기본 값
+
+> 설명: 선택 사항  
+> 유형: 퍼블릭 호스팅 영역  
+> 태그: 입력할 거라면 자유롭게 입력
+
+입력을 마쳤으면 하단의 호스팅 영역 생성 버튼을 클릭한다.
+
+![라우팅 대상 확인](/static/images/2023/10/aws-deployment-1/image-12.png)
+
+생성된 호스팅 영역의 레코드 상세를 확인해보면 값/트래픽 라우팅 대상에 4개의 네임서버 정보가 존재하는데, 이제 이걸 우리가 도메인을 구매한 가비아에도 설정해줘야 한다.
+
+### 4. 가비아 네임서버 설정
+
+![네임서버 설정](/static/images/2023/10/aws-deployment-1/image-11.png)
+
+![네임서버 설정](/static/images/2023/10/aws-deployment-1/image-13.png)
+
+도메인을 구매한 가비아 대시보드에서 설정해준다.
+
+Route53 호스팅 영역의 NS 타입에 존재하는 값/트래픽 라우팅 대상 4개를 입력하면 되는데, 마지막에 점 하나는 빼고 입력하면 된다.
+
+## ACM 생성
+
+HTTPS 프로토콜을 이용하기 위해서는 먼저 SSL 인증서를 발급받아야 한다.
+보통 인증서를 발급받는데 비용이 들거나 Let's encrypt + Certbot 으로 만료 기간이 짧은 인증서를 계속 갱신해주는 방법도 있지만, 지금처럼 오로지 AWS만 이용해서 배포하려는 경우에는 편리하게 ACM을 이용할 수 있다.
+
+`ACM(AWS Certificate Manager)`을 통해서 인증서를 발급 받으면 무료이고 다른 AWS 서비스에서 활용하기도 굉장히 편리하다. 단, ACM을 통해서 발급받은 인증서는 외부에서 사용할 수 없고 오로지 AWS 에서만 사용가능하다.
+
+### 1. 리전 선택
+
+![리전 버지니아 북부](/static/images/2023/10/aws-deployment-1/region.png)
+
+이후에 후술하겠지만 이 인증서는 Cloudfront 에서 사용될 예정인데, <b style={{ color: 'red' }}>**Cloudfront 에서는 버지니아 북부 리전에서 발급된 인증서만 사용할 수 있다!!**</b> 따라서 꼭 헤더에서 버지니아 북부 리전을 선택해주자.
+
+### 2. ACM 대시보드
+
+![ACM 대시보드](/static/images/2023/10/aws-deployment-1/image-4.png)
+
+상단의 헤더에 ACM을 검색해서 Certificate Manager에 들어가자.
+
+### 3. 인증서 요청
+
+![인증서 요청](/static/images/2023/10/aws-deployment-1/image.png)
+
+왼쪽 사이드 바의 인증서 요청을 눌러준다.
+
+### 4. 퍼블릭 인증서 선택
+
+![퍼블릭 인증서](/static/images/2023/10/aws-deployment-1/image-1.png)
+
+기본적으로 선택되어 있는 퍼블릭 인증서로 그대로 두고 다음 버튼을 클릭한다.
+
+### 5. 도메인 이름 설정
+
+![도메인 이름](/static/images/2023/10/aws-deployment-1/image-2.png)
+
+우리가 브라우저의 URL 창에 다음과 같은 주소를 입력할 때:
+
+```
+https://bearcookiestudy.site/
+https://www.bearcookiestudy.site/
+```
+
+앞에 www가 붙거나 안붙어도 상관없이 모두 우리 서비스에 접근할 수 있도록 할 것이다. 그렇기에 서브 도메인이 없을 때랑 `www` 일 때에 대한 도메인 이름을 입력해준다.
+
+그 외의 정보는 기본 값을 그대로 사용한다.
+
+#### 기본 값
+
+> 검증 방법: DNS 검증 - 권장  
+> 키 알고리즘: RSA 2048  
+> 태그: 입력할 거라면 자유롭게 입력
+
+입력을 마쳤으면 하단의 요청 버튼을 클릭한다.
+
+### 6. DNS 레코드 생성
+
+이제 Route53에서 생성했던 호스팅 영역과, 현재 생성한 ACM 인증서를 연결해줘야 한다. 이를 위한 과정은:
+
+![인증서 목록](/static/images/2023/10/aws-deployment-1/image-8.png)
+
+생성된 인증서의 ID를 눌러서 상세 보기로 들어간다.
+
+![레코드 생성](/static/images/2023/10/aws-deployment-1/image-9.png)
+
+Route 53에서 레코드 생성 버튼을 클릭한다.
+
+![레코드 생성](/static/images/2023/10/aws-deployment-1/image-10.png)
+
+마지막으로 레코드 생성 버튼을 클릭하면 된다.
+다만, 인증서 발급까지의 시간이 좀 걸리기 때문에 상태가 아직 검증 대기중일 수 있다.
+
+## S3 생성
+
+S3는 AWS에서 제공하는 일종의 클라우드 저장소이다.  
+단순히 구글 드라이브처럼 파일을 보관하는 용도로 사용할 수도 있지만 GitHub 레포지토리에 통합된 개발 작업이 올라오면 자동으로 빌드한 결과를 올린다거나, 이미지나 html 파일같은 정적 파일을 배포하는 데에도 유용하게 사용할 수 있다.
+
+### 1. S3 대시보드
+
+![S3 대시보드](/static/images/2023/10/aws-deployment-1/image-14.png)
+
+상단의 헤더에 S3를 검색해서 S3에 들어가자.
+
+### 2. 버킷 생성
+
+![버킷](/static/images/2023/10/aws-deployment-1/image-15.png)
+
+![버킷 만들기](/static/images/2023/10/aws-deployment-1/image-16.png)
+
+왼쪽 사이드 바의 버킷을 누르고 버킷 만들기 버튼을 클릭한다.
+
+#### 일반 구성
+
+![버킷 이름](/static/images/2023/10/aws-deployment-1/image-17.png)
+
+버킷 이름을 원하는 이름으로 적어준다.
+리전은 서울이 가까우니 서울로 해주자.
+
+#### 객체 소유권
+
+![객체 소유권](/static/images/2023/10/aws-deployment-1/image-18.png)
+
+이 부분은 자세히는 모르겠지만 ACL 비활성화됨으로 체크했다.
+
+#### 퍼블릭 액세스 차단
+
+![퍼블릭 액세스 차단](/static/images/2023/10/aws-deployment-1/image-19.png)
+
+지금 생성하려는 S3 버킷에 빌드된 리액트 앱의 정적 파일이 올라올 예정인데, 다른 사람들이 이 버킷에 GET 요청이 가능해야하기 때문에 액세스 차단은 체크 해제해준다.
+
+#### 버킷 버전 관리
+
+![버킷 버전 관리](/static/images/2023/10/aws-deployment-1/image-20.png)
+
+크게 백업을 하진 않을 것이기 때문에, 버킷 버전 관리는 비활성화 체크해준다.
+
+#### 기본 암호화
+
+![기본 암호화](/static/images/2023/10/aws-deployment-1/image-21.png)
+
+기본 암호화는 기본으로 설정되어 있는 값을 사용한다.
+모두 설정을 마쳤으면 버킷 만들기 버튼을 클릭한다.
+
+## 정적 웹 호스팅 설정
+
+### 1. 버킷 상세
+
+![버킷 상세](/static/images/2023/10/aws-deployment-1/image-22.png)
+
+버킷 이름을 클릭해서 상세 페이지로 들어간다.
+
+### 2. 속성 탭
+
+![속성](/static/images/2023/10/aws-deployment-1/image-23.png)
+
+상단에 속성 탭을 클릭한다.
+
+### 3. 정적 웹 사이트 호스팅
+
+![정적 웹 사이트 호스팅](/static/images/2023/10/aws-deployment-1/image-24.png)
+
+페이지를 내려보면 하단에 정적 웹 사이트 호스팅이 있는데 편집 버튼을 클릭한다.
+
+![정적 웹 사이트 호스팅](/static/images/2023/10/aws-deployment-1/image-25.png)
+
+정적 웹 사이트 호스팅을 활성화 하고 인덱스 문서와 오류 문서에 `index.html` 파일을 지정한다. 이후에 GitHub 레포지토리에 올라온 내용이 빌드되면 S3 버킷에서 루트 디렉토리의 `index.html` 파일을 실행하도록 할 것이기 때문이다.
+
+그리고 SPA의 특성상 URI path에 다른 경로가 들어와도 `index.html` 파일을 보여줘야 하기 때문에 오류 문서도 동일하게 적어준다.
+
+> **수정 내용**  
+> 이후에 알게된 내용인데, 버킷에 오류 문서를 직접 적는것 보다 Cloudfront의 오류 페이지 설정을 통해서 정상적인 응답으로 변경해주는 것이 좋다.
+> 오류 문서만 `index.html` 로 설정하는 경우에는 무조건 한 번은 404 응답을 받게되기 때문에 Lighthouse도 동작하지 않으며, 링크 공유시 Open Graph 설정도 적용되지 않는다.
+
+## 버킷 정책 설정
+
+버킷에 대한 GET 요청을 열어줘야 하기 때문에 추가적으로 버킷 정책을 설정해줘야 한다.
+
+### 1. 권한 탭
+
+![권한](/static/images/2023/10/aws-deployment-1/image-26.png)
+
+상단에 권한 탭을 클릭한다.
+
+### 2. 버킷 정책
+
+![버킷 정책](/static/images/2023/10/aws-deployment-1/image-27.png)
+
+페이지를 조금 내려보면 버킷 정책이 있는데 편집 버튼을 눌러준다.
+
+![정책 생성기](/static/images/2023/10/aws-deployment-1/image-29.png)
+
+그 뒤에 정책 생성기 버튼을 누른다.
+
+### 3. 정책 생성기
+
+![정책 생성기](/static/images/2023/10/aws-deployment-1/image-30.png)
+
+**Select Type of Policy**: `S3 Bucket Policy`  
+**Principal**: `*`  
+**Actions**: `GetObject`  
+**ARN**: 자신의 버킷 ARN에 마지막에 `/*`를 붙인 문자열  
+`ex) arn:aws:s3:::bearcookiestudy/*`
+
+적절한 정책을 입력했으면 Add Statement -> Generate Policy 버튼을 클릭해서 생성한다.
+
+### 4. 정책 입력
+
+![정책 입력](/static/images/2023/10/aws-deployment-1/image-31.png)
+
+이제 생성했던 정책을 붙여넣고 하단에서 변경 사항 저장 버튼을 누른다.
+
+## CloudFront
+
+S3 설정을 정상적으로 마쳤으면 버킷에 `index.html` 파일을 넣고 버킷 웹 사이트 엔드포인트로 접속하면 화면이 나올 것이다.
+
+이렇게 S3 버킷에 직접 접근해서 화면을 볼 수도 있지만 이 경우에는 몇 가지 문제점이 있다.
+
+1. `HTTPS` 프로토콜을 사용할 수 없다.
+2. 리전으로부터 먼 곳에서 접속하는 경우에는 속도가 느리다.
+3. S3 버킷에 액세스하는 횟수가 많아서 경우에 따라서 비용이 비교적 많이 들 수 있다.
+
+그래서 우리는 AWS에서 제공하는 CDN 서비스인 CloudFront를 이용해보고자 한다.
+
+### 1. CloudFront 대시보드
+
+![CloudFront 대시보드](/static/images/2023/10/aws-deployment-1/image-32.png)
+
+상단의 헤더에 CloudFront를 검색해서 CloudFront에 들어가자.
+
+### 2. 배포 생성
+
+![배포](/static/images/2023/10/aws-deployment-1/image-33.png)
+
+![배포 생성](/static/images/2023/10/aws-deployment-1/image-34.png)
+
+왼쪽의 사이드바에서 배포를 클릭한 뒤, 배포 생성 버튼을 클릭한다.
+
+### 3. 원본
+
+![원본](/static/images/2023/10/aws-deployment-1/image-35.png)
+
+원본 도메인을 입력한다.
+
+### 4. 기본 캐시 동작
+
+![기본 캐시 동작](/static/images/2023/10/aws-deployment-1/image-36.png)
+
+뷰어 프로토콜 정책에서 Redirect HTTP to HTTPS를 선택한다.
+
+### 5. 웹 애플리케이션 방화벽(WAF)
+
+![WAF](/static/images/2023/10/aws-deployment-1/image-37.png)
+
+WAF는 추가 비용이 들기 때문에 비활성화한다.
+
+### 6. 설정
+
+![설정](/static/images/2023/10/aws-deployment-1/image-39.png)
+
+대체 도메인 이름에는 아까 인증서를 발급받을 때 줬던 도메인 이름을 그대로 입력해도 좋다.  
+설정 패널에서는 아까 발급받았던 SSL 인증서를 선택한다.  
+나머지는 기본 값을 사용한다.
+
+입력을 마쳤으면 배포 생성 버튼을 클릭한다.
+
+## CloudFront 오류 페이지 설정
+
+![Cloudfront 오류 페이지 설정](/static/images/2023/10/aws-deployment-1/image-60.png)
+
+단일 문서만 존재하는 SPA이기 때문에 클라이언트 사이드에서 라우팅한 경로로 접속해서 404 코드를 받더라도 정상적인 페이지와 응답을 보여줄 수 있게끔 설정해준다.
+
+## Route53 + CloudFront 연동
+
+아까 생성했던 Route53의 호스팅 영역과 방금 생성한 CloduFront 배포가 연결되도록 설정해야한다.
+
+![호스팅 영역](/static/images/2023/10/aws-deployment-1/image-55.png)
+
+호스팅 영역의 상세 페이지로 들어가서 레코드 생성 버튼을 눌러서 두 개의 레코드를 생성해준다. (각각 레코드 생성 버튼을 따로 눌러야 한다.)
+
+![루트 도메인](/static/images/2023/10/aws-deployment-1/image-56.png)
+
+![www 도메인](/static/images/2023/10/aws-deployment-1/image-57.png)
+
+## IAM 생성
+
+이제 전체적인 인프라 설정은 마쳤는데 아직 S3 버킷에 실제로 소스코드를 올리는 절차를 작업하지 않았기 때문에 아직 URL 주소에 접속해도 아무런 화면이 나오지 않을 것이다.
+
+GitHub 레포지토리에 소스코드가 push되면 자동으로 CI 서버에서 빌드한 뒤, 결과물을 S3에 올리는 과정이 필요하다. 그러기 위해서는 우선 CI 서버에게 우리의 AWS에 접근할 수 있는 권한을 부여해야 하는데, 이를 위해서 IAM을 생성한다.
+
+### 1. IAM 대시보드
+
+![IAM 대시보드](/static/images/2023/10/aws-deployment-1/image-40.png)
+
+상단의 헤더에 IAM 을 입력해서 IAM 대시보드에 들어간다.
+
+### 2. 사용자 생성
+
+![사용자](/static/images/2023/10/aws-deployment-1/image-41.png)
+
+![사용자 생성](/static/images/2023/10/aws-deployment-1/image-42.png)
+
+왼쪽 사이드바의 액세스 관리 -> 사용자 를 누르고, 사용자 생성 버튼을 클릭한다.
+
+### 3. 사용자 세부 정보
+
+![사용자 세부 정보](/static/images/2023/10/aws-deployment-1/image-45.png)
+
+- IAM 사용자를 생성하고 싶음을 체크한다.
+- 사용자는 다음 로그인 시 새 암호를 생성해야 합니다를 체크 해제한다.
+- 다음 버튼을 클릭한다.
+
+### 4. 권한 정책 설정
+
+![권한 옵션](/static/images/2023/10/aws-deployment-1/image-46.png)
+
+권한 옵션에서 직접 정책 연결을 선택한다.
+그리고 권한 정책은 `AmazonS3FullAccess`, `CloudFrontFullAccess` 두 가지를 허용한다.
+설정을 마쳤다면 다음 버튼을 클릭한다.
+
+### 5. 검토
+
+![검토](/static/images/2023/10/aws-deployment-1/image-47.png)
+
+검토 후 사용자 생성 버튼을 클릭한다.
+
+## IAM 액세스 토큰 생성
+
+IAM을 생성했으면 이제 GitHub에서 이 IAM에 접근하기 위한 액세스 토큰을 생성해야 한다.
+
+### 1. 액세스 키 만들기
+
+![액세스 키 만들기](/static/images/2023/10/aws-deployment-1/image-48.png)
+
+IAM 상세 페이지에서 액세스 키 만들기를 클릭한다.
+
+![사용 사례](/static/images/2023/10/aws-deployment-1/image-49.png)
+
+사용 사례로 AWS 외부에서 실행되는 애플리케이션을 선택하고 생성한다.
+
+![액세스 키](/static/images/2023/10/aws-deployment-1/image-50.png)
+
+여기에서 비밀 액세스 키는 더 이상 확인이 불가능하게 되므로 꼭 기억해 둬야한다!!  
+기억한 뒤, 이후에 GitHub 레포지토리에서 시크릿 키로 등록할 것이다.  
+마지막으로 완료 버튼을 누른다.
+
+## GitHub 시크릿 등록
+
+### 1. CI 스크립트
+
+[예시 레포지토리](https://github.com/bbearcookie/auth-playground/blob/deploy/.github/workflows/front-deploy.yml)를 살펴보면 배포 브랜치에 push 이벤트가 발생할 때 빌드한 뒤에 S3 버킷 저장소에 내용을 업로드 하고 있다.
+
+```yml
+name: React App CI/CD
+
+on:
+  push:
+    branches: ['deploy']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./client/
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18.x
+          cache: 'npm'
+          cache-dependency-path: ./client/package-lock.json
+
+      - run: npm i
+      - run: npm run build --if-present
+
+      - uses: awact/s3-action@master
+        with:
+          args: --acl public-read --follow-symlinks --delete
+        env:
+          SOURCE_DIR: './client/dist'
+          AWS_REGION: 'ap-northeast-2'
+          AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Invalidate CloudFront
+        uses: chetan/invalidate-cloudfront-action@v2
+        env:
+          DISTRIBUTION: ${{ secrets.AWS_CLOUDFRONT_ID }}
+          PATHS: '/*'
+          AWS_REGION: 'ap-northeast-2'
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+```
+
+> 참고로 변경된 사항을 빠르게 확인할 수 있도록 CloudFront에 캐싱되어있는 내용을 초기화하고 있다는 점도 확인할 수 있다.
+
+아까 발급한 AMI의 시크릿 키 외에도 몇 가지 정보가 필요한데, 이 정보는 GitHub 레포지토리에 설정할 수 있다.
+
+### 2. GitHub 시크릿 등록
+
+- 레포지토리에서 Setting -> Security -> Secrets and variables -> Actions 에 들어간다.
+- New Repository secret 버튼을 클릭한다.
+- 아래에서 이어지는 내용을 참고해 몇 가지의 내용을 추가한다.
+
+#### `AWS_SECRET_ACCESS_KEY`
+
+아까 생성한 AMI의 비밀 액세스 키를 입력한다.
+
+#### `AWS_ACCESS_KEY_ID`
+
+![AMI](/static/images/2023/10/aws-deployment-1/image-51.png)
+
+AMI 상세 페이지에서 확인할 수 있는 액세스 키를 입력한다.
+
+#### `AWS_S3_BUCKET`
+
+![S3 버킷](/static/images/2023/10/aws-deployment-1/image-52.png)
+
+버킷의 이름을 입력한다.
+
+#### `AWS_CLOUDFRONT_ID`
+
+![CloudFront](/static/images/2023/10/aws-deployment-1/image-53.png)
+
+CloudFront의 ID를 입력한다.
+
+## 결과 확인
+
+![CI 결과](/static/images/2023/10/aws-deployment-1/image-54.png)
+
+![S3 버킷](/static/images/2023/10/aws-deployment-1/image-59.png)
+
+![접속 화면](/static/images/2023/10/aws-deployment-1/image-58.png)
+
+deploy 브랜치에 push한 내용이 그대로 빌드되어서 S3 버킷에 올라오고, 브라우저로 도메인 주소에 접속하면 화면이 잘 나타나고 있는 것을 확인할 수 있다.
