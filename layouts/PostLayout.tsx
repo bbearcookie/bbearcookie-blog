@@ -9,6 +9,7 @@ import SectionContainer from '@/components/SectionContainer'
 import Tag from '@/components/Tag'
 import siteMetadata from '@/data/siteMetadata'
 import ScrollTopAndComment from '@/components/ScrollTopAndComment'
+import clsx from 'clsx'
 
 const editUrl = (path) => `${siteMetadata.siteRepo}/blob/main/data/${path}`
 const discussUrl = (path) =>
@@ -24,13 +25,21 @@ const postDateTemplate: Intl.DateTimeFormatOptions = {
 interface LayoutProps {
   content: CoreContent<Blog>
   authorDetails: CoreContent<Authors>[]
+  seriesContents: { path: string; title: string }[]
   next?: { path: string; title: string }
   prev?: { path: string; title: string }
   children: ReactNode
 }
 
-export default function PostLayout({ content, authorDetails, next, prev, children }: LayoutProps) {
-  const { filePath, path, slug, date, title, tags } = content
+export default function PostLayout({
+  content,
+  authorDetails,
+  seriesContents,
+  next,
+  prev,
+  children,
+}: LayoutProps) {
+  const { filePath, path, slug, date, title, tags, series, readingTime } = content
   const basePath = path.split('/')[0]
 
   return (
@@ -52,6 +61,7 @@ export default function PostLayout({ content, authorDetails, next, prev, childre
               </dl>
               <div>
                 <PageTitle>{title}</PageTitle>
+                <span className="text-base font-medium leading-6">{readingTime.text}</span>
               </div>
             </div>
           </header>
@@ -94,7 +104,31 @@ export default function PostLayout({ content, authorDetails, next, prev, childre
               </dd>
             </dl>
             <div className="divide-y divide-gray-200 dark:divide-gray-700 xl:col-span-3 xl:row-span-2 xl:pb-0">
-              <div className="prose max-w-none pb-8 pt-10 dark:prose-invert">{children}</div>
+              <div className="prose max-w-none pb-8 pt-10 dark:prose-invert">
+                {seriesContents.length > 0 && (
+                  <div className="rounded-2xl border-[1px] border-gray-200 bg-[#f6f7f9] p-4 text-sm">
+                    <h3 className="m-0">
+                      SERIES: {series} ({seriesContents.length})
+                    </h3>
+                    <ul className="m-0">
+                      {seriesContents.map((p) => (
+                        <li key={p.path}>
+                          <Link
+                            className={clsx(
+                              'text-gray-500 no-underline transition-all duration-200',
+                              p.path === path && 'font-bold text-primary-600'
+                            )}
+                            href={`/${p.path}`}
+                          >
+                            {p.title}
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {children}
+              </div>
               <div className="pb-6 pt-6 text-sm text-gray-700 dark:text-gray-300">
                 <Link href={discussUrl(path)} rel="nofollow">
                   Discuss on Twitter

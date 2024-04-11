@@ -105,6 +105,9 @@ export default async function Page({ params }: { params: { slug: string[] } }) {
       name: author.name,
     }
   })
+  const seriesContents = sortedCoreContents.filter(
+    (p) => p.series && p.series === mainContent.series
+  )
 
   const Layout = layouts[post.layout || defaultLayout]
 
@@ -114,7 +117,13 @@ export default async function Page({ params }: { params: { slug: string[] } }) {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
-      <Layout content={mainContent} authorDetails={authorDetails} next={next} prev={prev}>
+      <Layout
+        content={mainContent}
+        seriesContents={seriesContents}
+        authorDetails={authorDetails}
+        next={next}
+        prev={prev}
+      >
         <MDXLayoutRenderer code={post.body.code} components={components} toc={post.toc} />
       </Layout>
     </>
