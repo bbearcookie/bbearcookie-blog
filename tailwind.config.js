@@ -28,6 +28,9 @@ module.exports = {
         primary: colors.orange,
         gray: colors.gray,
         link: '#68B5FB',
+        image: {
+          background: '#0E0E0E',
+        },
       },
       typography: ({ theme }) => ({
         DEFAULT: {
