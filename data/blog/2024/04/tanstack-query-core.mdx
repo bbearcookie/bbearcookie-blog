@@ -1,0 +1,770 @@
+---
+title: TanStack Query의 코어 살펴보기
+date: '2024-04-16'
+lastmod: '2024-04-16'
+tags: ['tanstack query']
+draft: false
+summary: '@tanstack/query-core가 구현되어 있는 내용을 살펴봤습니다.'
+series: TanStack Query 동작 원리 살펴보기
+---
+
+## 서론
+
+[이전](/blog/2023/12/state-management-and-observer)에 `TanStack Query` 가 관리하는 상태의 변화를 리액트 컴포넌트가 어떻게 감지하고 리렌더링하는지를 알아보면서 `useSyncExternalStore` 훅으로 외부의 상태를 구독하고 있다는 점을 살펴본 적이 있었습니다.
+
+최근 `TanStack Query` 가 캐싱을 어떻게 처리하고 있는지 알고 있는지에 대한 질문을 받았는데, 평소에 좋아하고 자주 활용하는 라이브러리이지만 내부 동작까지 깊게 살펴보진 못했던 것 같아서 이번에 `@tanstack/query-core` 라이브러리를 살펴보게 되었습니다.
+
+이번 포스팅에서는 TanStack Query에서 사용하고 있는 코어 요소들의 관계에 대해 알아보고, 내부적으로 캐싱을 어떻게 처리하고 있는지에 대해서 작성해보고자 합니다.  
+(`@tanstack/react-query` 5.29.2 버전을 기준으로 작성되었습니다.)
+
+## Core와 Adapter
+
+![TanStack Query 아키텍처 (출처: TKdodo's Blog)](/static/images/2024/04/tanstack-query-core/react-query-architecture.png)
+
+```
+📁 packages
+  📁 query-core: 핵심 로직이 들어있는 패키지
+  📁 react-query: React용 어댑터
+  📁 solid-query: Solid용 어댑터
+  📁 svelte-query: Svelte용 어댑터
+  📁 vue-query: Vue용 어댑터
+```
+
+`TanStack Query` 패키지는 `query-core` 라는 패키지를 만들어서 핵심 로직을 분리하고, 각각의 프레임워크에 맞게 어댑터 역할을 하는 패키지가 `react-query`, `solid-query`, `svelte-query`, `vue-query` 등으로 나뉘어져 있습니다.
+
+핵심 로직은 모두 `query-core` 에 존재하기 때문에 새로운 프레임워크를 위한 어댑터를 만들기도 수월한데요. 실제로 React용 `useQuery` 어댑터에는 약 100줄 가량의 코드만 존재한다는 것을 메인테이너 TKdodo님은 이야기하고 있습니다.
+
+따라서 `TanStack Query` 의 로직을 살펴보기 위해선, `query-core` 패키지를 확인해야 합니다.
+
+## TanStack Query의 추상 클래스
+
+`@tanstack/query-core` 라이브러리에서는 여러 핵심 요소가 클래스로 작성되어 있습니다.  
+각각의 요소를 알아보기에 앞서, 자주 상속되어 사용되는 두 추상 클래스 `Subscribable`, `Removable` 에 대해서 살펴보겠습니다.
+
+### Subscribable
+
+구독 가능한 대상임을 나타내는 추상 클래스입니다.  
+이 클래스를 상속하면 자신을 구독하는 구독자를 가질 수 있게 되고, 자신의 상태가 변화하면 구독자들에게 변화를 알릴 수 있습니다. `QueryObserver` 와 `QueryCache` 가 이 추상 클래스를 상속하고 있습니다.
+
+핵심적으로 살펴보면 좋을 부분은 `subscribe` 함수입니다.  
+해당 함수의 인자로 구독자를 전달받으면, `listeners` 에 등록되게 됩니다.
+
+> subscribe 함수가 구독을 정리하는 함수를 반환하는 이유는 React의 `useSyncExternalStore` 혹은 `useEffect` 훅을 사용하여 구독할 때 클린업 함수에 구독을 정리하는 내용을 작성해야 하기 때문입니다.
+
+```ts {2, 10-17} showLineNumbers
+export class Subscribable<TListener extends Function = Listener> {
+  protected listeners: Set<TListener>
+
+  constructor() {
+    this.listeners = new Set()
+    this.subscribe = this.subscribe.bind(this)
+  }
+
+  subscribe(listener: TListener): () => void {
+    this.listeners.add(listener)
+
+    this.onSubscribe()
+
+    return () => {
+      this.listeners.delete(listener)
+      this.onUnsubscribe()
+    }
+  }
+
+  hasListeners(): boolean {
+    return this.listeners.size > 0
+  }
+
+  protected onSubscribe(): void {
+    // Do nothing
+  }
+
+  protected onUnsubscribe(): void {
+    // Do nothing
+  }
+}
+```
+
+### Removable
+
+제거 가능한 대상임을 나타내는 추상 클래스입니다.  
+`gcTime` 만큼의 시간동안 대기했다가, 상속한 클래스가 구현한 `optionalRemove` 메소드를 실행하는 타이머를 가지고 있습니다.
+
+```ts {3, 13-15, 31} showLineNumbers
+export abstract class Removable {
+  gcTime!: number
+  #gcTimeout?: ReturnType<typeof setTimeout>
+
+  destroy(): void {
+    this.clearGcTimeout()
+  }
+
+  protected scheduleGc(): void {
+    this.clearGcTimeout()
+
+    if (isValidTimeout(this.gcTime)) {
+      this.#gcTimeout = setTimeout(() => {
+        this.optionalRemove()
+      }, this.gcTime)
+    }
+  }
+
+  protected updateGcTime(newGcTime: number | undefined): void {
+    // Default to 5 minutes (Infinity for server-side) if no gcTime is set
+    this.gcTime = Math.max(this.gcTime || 0, newGcTime ?? (isServer ? Infinity : 5 * 60 * 1000))
+  }
+
+  protected clearGcTimeout() {
+    if (this.#gcTimeout) {
+      clearTimeout(this.#gcTimeout)
+      this.#gcTimeout = undefined
+    }
+  }
+
+  protected abstract optionalRemove(): void
+}
+```
+
+이 추상 클래스는 `Query` 클래스가 상속해서 사용하고 있으며, 일정 시간이 지나면 캐시에서 데이터를 완전히 제거하기 위해 존재합니다.
+
+```ts {6} showLineNumbers
+export class Query extends Removable {
+  #cache: QueryCache
+
+  protected optionalRemove() {
+    if (!this.#observers.length && this.state.fetchStatus === 'idle') {
+      this.#cache.remove(this)
+    }
+  }
+}
+```
+
+import { useSyncExternalStore } from 'react'
+
+## TanStack Query의 핵심 요소
+
+![TanStack Query의 핵심 요소](/static/images/2024/04/tanstack-query-core/classes.png)
+
+이제 코어 패키지에 존재하는 핵심 요소를 알아보기 위해 `@tanstack/query-core` 라이브러리에 존재하는 요소들의 의존 관계 및 카디널리티를 표현해보았습니다.  
+각각의 클래스가 참여하고 있는 관계를 `1:1`, `1:N` 으로 나타냈고, 의존하고 있는 방향을 화살표로 표현했습니다.
+
+각각의 역할을 간단하게 정리해보자면 다음과 같습니다.
+
+- **useBaseQuery**: 코어가 아닌 `@tanstack/react-query` 패키지에 존재하는 훅입니다. TanStack Query의 핵심 로직은 대부분 코어 패키지에 존재하는데, `useBaseQuery` 는 단순히 코어 패키지를 리액트에서 사용하기 위한 어댑터 역할을 수행합니다. `useQuery`, `useSuspenseQuery`, `useInfiniteQuery`, `useSuspenseInfiniteQuery` 등 모든 훅은 내부적으로 `useBaseQuery` 훅을 사용합니다.
+- **QueryObserver**: Query의 상태에 변화가 발생하면 새로운 결과값을 만든 뒤 구독자들에게 알려서 리렌더링을 발생시킵니다. 리액트를 기준으로 `useQuery` 훅을 선언하는 위치마다 `QueryObserver` 가 하나씩 생성되며, 리액트 컴포넌트가 `QueryObserver` 의 구독자가 됩니다.
+- **QueryClient**: 캐싱된 데이터에 접근하고 조작할 수 있는 인터페이스를 제공하는 역할을 수행합니다. 이 API는 라이브러리 사용자에게도 제공됩니다.
+- **QueryCache**: 각 쿼리 키 별 고유한 `Query` 객체를 관리하는 역할을 수행합니다. 덕분에 중복된 쿼리 키를 가진 객체는 하나만 생성해서 사용할 수 있습니다.
+- **Query**: 각 쿼리에 해당하는 데이터 및 상태를 관리하는 역할을 수행합니다. 사용자가 주입한 `queryFn` 이 최종적으로 실행되어 네트워크 요청이 발생하는 것도 이 클래스가 담당합니다.
+
+한 문단으로 표현하자니 이해하기가 쉽지 않은데, 코드를 살펴보면서 각각의 역할을 파악한 내용을 서술하겠습니다.
+
+### QueryClient
+
+많이 생략했지만 [QueryClient에서 제공하는 API](https://tanstack.com/query/latest/docs/reference/QueryClient) 가 모두 메소드로 구현 되어 있다는 점을 확인할 수 있습니다.
+`queryCache` 과 `mutationCache` 를 내부의 프로퍼티로 가지고 있기 때문에 캐싱된 데이터에 접근하고 조작하는 API를 제공할 수 있습니다.
+
+> 24줄을 살펴보면, 캐시에 저장할 데이터를 바로 저장하는 것이 아니라 콜백을 모아서 한번에 처리하는 배칭이 적용되어있다는 점을 확인할 수 있는데요. 이 부분은 `notifyManager` 에 대해서 살펴볼 때 후술하겠습니다.
+
+```ts {2-3, 6-7, 24} showLineNumbers
+export class QueryClient {
+  #queryCache: QueryCache
+  #mutationCache: MutationCache
+
+  constructor(config: QueryClientConfig = {}) {
+    this.#queryCache = config.queryCache || new QueryCache()
+    this.#mutationCache = config.mutationCache || new MutationCache()
+  }
+
+  getQueriesData<TQueryFnData = unknown>(
+    filters: QueryFilters
+  ): Array<[QueryKey, TQueryFnData | undefined]> {
+    return this.#queryCache.findAll(filters).map(({ queryKey, state }) => {
+      const data = state.data as TQueryFnData | undefined
+      return [queryKey, data]
+    })
+  }
+
+  setQueriesData<TQueryFnData>(
+    filters: QueryFilters,
+    updater: Updater<TQueryFnData | undefined, TQueryFnData | undefined>,
+    options?: SetDataOptions
+  ): Array<[QueryKey, TQueryFnData | undefined]> {
+    return notifyManager.batch(() =>
+      this.#queryCache
+        .findAll(filters)
+        .map(({ queryKey }) => [
+          queryKey,
+          this.setQueryData<TQueryFnData>(queryKey, updater, options),
+        ])
+    )
+  }
+}
+```
+
+또한, 아래 코드는 `fetchQuery` 메소드인데요.  
+`QueryCache` 객체의 `build` 메소드를 호출해서 `Query` 객체를 생성한 뒤, 데이터를 패칭하기 위해 `fetch` 메소드를 호출하고 있다는 점을 확인할 수 있습니다.
+
+> 20줄의 `isStaleByTime` 메소드를 통해 `staleTime` 만큼의 시간이 지났는지를 체크하여 불필요한 네트워크 요청을 줄였다는 부분도 확인할 수 있습니다.
+
+```ts {18, 20-22} showLineNumbers
+export class QueryClient {
+  fetchQuery<
+    TQueryFnData,
+    TError = DefaultError,
+    TData = TQueryFnData,
+    TQueryKey extends QueryKey = QueryKey,
+    TPageParam = never,
+  >(
+    options: FetchQueryOptions<TQueryFnData, TError, TData, TQueryKey, TPageParam>
+  ): Promise<TData> {
+    const defaultedOptions = this.defaultQueryOptions(options)
+
+    // https://github.com/tannerlinsley/react-query/issues/652
+    if (defaultedOptions.retry === undefined) {
+      defaultedOptions.retry = false
+    }
+
+    const query = this.#queryCache.build(this, defaultedOptions)
+
+    return query.isStaleByTime(defaultedOptions.staleTime)
+      ? query.fetch(defaultedOptions)
+      : Promise.resolve(query.state.data as TData)
+  }
+}
+```
+
+### QueryCache
+
+`QueryCache` 내부에는 `queries` 라는 Map 객체가 존재합니다. 이 프로퍼티는 **같은 key를 갖는 쿼리는 단일 객체만 존재하도록** 관리하는 역할을 합니다.
+
+17줄의 `build` 메소드는 `queryKey` 를 `queryHash` 로 변환한 뒤, Map에 이미 존재하는 쿼리 객체가 있다면 해당 객체를 재활용하고, 없다면 새로운 객체를 생성합니다.
+
+```ts {10, 14, 17, 22-24, 27, 35} showLineNumbers
+export interface QueryStore {
+  has: (queryHash: string) => boolean
+  set: (queryHash: string, query: Query) => void
+  get: (queryHash: string) => Query | undefined
+  delete: (queryHash: string) => void
+  values: () => IterableIterator<Query>
+}
+
+export class QueryCache extends Subscribable<QueryCacheListener> {
+  #queries: QueryStore
+
+  constructor(public config: QueryCacheConfig = {}) {
+    super()
+    this.#queries = new Map<string, Query>()
+  }
+
+  build<TQueryFnData, TError, TData, TQueryKey extends QueryKey>(
+    client: QueryClient,
+    options: WithRequired<QueryOptions<TQueryFnData, TError, TData, TQueryKey>, 'queryKey'>,
+    state?: QueryState<TData, TError>
+  ): Query<TQueryFnData, TError, TData, TQueryKey> {
+    const queryKey = options.queryKey
+    const queryHash = options.queryHash ?? hashQueryKeyByOptions(queryKey, options)
+    let query = this.get<TQueryFnData, TError, TData, TQueryKey>(queryHash)
+
+    if (!query) {
+      query = new Query({
+        cache: this,
+        queryKey,
+        queryHash,
+        options: client.defaultQueryOptions(options),
+        state,
+        defaultOptions: client.getQueryDefaults(queryKey),
+      })
+      this.add(query)
+    }
+
+    return query
+  }
+
+  get<
+    TQueryFnData = unknown,
+    TError = DefaultError,
+    TData = TQueryFnData,
+    TQueryKey extends QueryKey = QueryKey,
+  >(queryHash: string): Query<TQueryFnData, TError, TData, TQueryKey> | undefined {
+    return this.#queries.get(queryHash) as Query<TQueryFnData, TError, TData, TQueryKey> | undefined
+  }
+}
+```
+
+#### hashKey
+
+build 메소드 내부의 `hashQueryKeyByOptions` 함수가 수행하는 역할을 파악하기 위해 코드를 타고 올라가면, 아래의 `hashKey` 함수를 호출하고 있다는 것을 알 수 있는데요.
+
+```ts showLineNumbers
+export function hashKey(queryKey: QueryKey | MutationKey): string {
+  return JSON.stringify(queryKey, (_, val) =>
+    isPlainObject(val)
+      ? Object.keys(val)
+          .sort()
+          .reduce((result, key) => {
+            result[key] = val[key]
+            return result
+          }, {} as any)
+      : val
+  )
+}
+```
+
+만약 아래와 같이 쿼리 키 형태에 맞는 배열을 작성해줬을 때, 해싱한 문자열을 만들어내고, 이 문자열을 Map의 key로 사용하여 동일한 쿼리의 데이터를 재활용할 수 있게 합니다.
+
+```ts
+const queries = new Map()
+
+queries.set(hashKey(['a', 'b', { hi: '안녕', bye: '바이' }]), '뭔가 데이터..')
+queries.set(hashKey(['a', 'b', { hi: '안녕', bye: '바이' }]), '뭔가 데이터..')
+queries.set(hashKey(['a', 'b', { hi: '안녕', bye: '바이' }]), '뭔가 데이터..')
+queries.set(hashKey(['a', 'b', { hi: '안녕', bye: '바이' }]), '뭔가 데이터..')
+
+console.log(queries) // Map(1) { '["a","b",{"bye":"바이","hi":"안녕"}]' => '뭔가 데이터..' }
+```
+
+또한 build 메소드 내부에서 `add` 메소드를 호출하면 `notify` 메소드가 실행되어 구독자들에게 쿼리가 추가되었음을 알리게 됩니다.
+
+```ts {6-9, 15-17} showLineNumbers
+export class QueryCache extends Subscribable<QueryCacheListener> {
+  add(query: Query<any, any, any, any>): void {
+    if (!this.#queries.has(query.queryHash)) {
+      this.#queries.set(query.queryHash, query)
+
+      this.notify({
+        type: 'added',
+        query,
+      })
+    }
+  }
+
+  notify(event: QueryCacheNotifyEvent) {
+    notifyManager.batch(() => {
+      this.listeners.forEach((listener) => {
+        listener(event)
+      })
+    })
+  }
+}
+```
+
+### Query
+
+쿼리의 상태를 관리하는 클래스입니다.
+
+몇 가지 프로퍼티와 메소드를 생략했지만, 핵심은 `state` 라는 프로퍼티에 해당 쿼리가 표현해야 할 데이터와 상태를 나타내고, `#dispatch` 라는 내부 메소드를 통해서 상태를 업데이트한 뒤, 구독자들에게 변화를 알린다는 점입니다.
+
+```ts {1, 25, 29, 40, 43-47} showLineNumbers
+export interface QueryState<TData = unknown, TError = DefaultError> {
+  data: TData | undefined
+  dataUpdateCount: number
+  dataUpdatedAt: number
+  error: TError | null
+  errorUpdateCount: number
+  errorUpdatedAt: number
+  fetchFailureCount: number
+  fetchFailureReason: TError | null
+  fetchMeta: FetchMeta | null
+  isInvalidated: boolean
+  status: QueryStatus
+  fetchStatus: FetchStatus
+}
+
+export class Query extends Removable {
+  queryKey: TQueryKey
+  queryHash: string
+  options!: QueryOptions<TQueryFnData, TError, TData, TQueryKey>
+  state: QueryState<TData, TError>
+
+  #cache: QueryCache
+  #retryer?: Retryer<TData>
+  #observers: Array<QueryObserver<any, any, any, any, any>>
+
+  #dispatch(action: Action<TData, TError>): void {
+    const reducer = (state: QueryState<TData, TError>): QueryState<TData, TError> => {
+      switch (action.type) {
+        case 'fetch':
+        // ...
+        case 'success':
+        // ...
+        case 'error':
+        // ...
+        case 'invalidate':
+        // ...
+      }
+    }
+
+    this.state = reducer(this.state)
+
+    notifyManager.batch(() => {
+      this.#observers.forEach((observer) => {
+        observer.onQueryUpdate()
+      })
+
+      this.#cache.notify({ query: this, type: 'updated', action })
+    })
+  }
+}
+```
+
+또한 `queryFn` 을 호출해서 실제 네트워크 요청을 수행할 수 있는 `fetch` 메소드가 존재하는 곳이기도 합니다.
+
+- **fetchFn**: `queryFn` 을 호출하는 중첩 함수입니다.
+- **retryer**: `fetch` 함수는 fetchFn 을 직접 호출하지 않고, `retryer` 객체를 거쳐서 처리하는데요. 그 이유는 여러 QueryObserver가 동시에 같은 쿼리를 구독하고 있을 때, 네트워크 요청을 QueryObserver의 갯수만큼 하지 않고 단 한번만 수행하도록 하기 위함입니다.
+
+```ts {15-17, 29-32} showLineNumbers
+export class Query extends Removable {
+  fetch(
+    options?: QueryOptions<TQueryFnData, TError, TData, TQueryKey>,
+    fetchOptions?: FetchOptions
+  ): Promise<TData> {
+    const abortController = new AbortController()
+
+    // Create query function context
+    const queryFnContext: OmitKeyof<QueryFunctionContext<TQueryKey>, 'signal'> = {
+      queryKey: this.queryKey,
+      meta: this.meta,
+    }
+
+    // Create fetch function
+    const fetchFn = () => {
+      return this.options.queryFn(queryFnContext as QueryFunctionContext<TQueryKey>)
+    }
+
+    // Trigger behavior hook
+    const context: OmitKeyof<FetchContext<TQueryFnData, TError, TData, TQueryKey>, 'signal'> = {
+      fetchOptions,
+      options: this.options,
+      queryKey: this.queryKey,
+      state: this.state,
+      fetchFn,
+    }
+
+    // Try to fetch the data
+    this.#retryer = createRetryer({
+      fn: context.fetchFn as () => Promise<TData>,
+      abort: abortController.abort.bind(abortController),
+    })
+
+    return this.#retryer.promise
+  }
+}
+```
+
+많이 생략했지만, createRetryer 함수를 살펴보면 아래 내용과 같습니다.  
+이 함수가 실행되면, 위에서부터 순차적으로 코드가 실행되면서 59번 라인에서 `run` 함수가 호출됩니다.
+
+- **37-39번 라인**: 이미 데이터를 받아와서 `resolve` 상태인 경우에는 네트워크 요청이 발생하지 않도록 얼리 리턴합니다.
+- **45번 라인**: `Query` 객체의 `fetch` 메소드에서 `createRetryer` 를 호출했을 때, `queryFn` 을 `options.fn` 으로 전달했는데, 이 것을 실행한다는 것은 즉 네트워크 요청이 발생한다는 것입니다.
+- **59번 라인**: `run` 함수가 호출됩니다.
+
+```ts {37-39, 45, 59} showLineNumbers
+export function createRetryer<TData = unknown, TError = DefaultError>(
+  config: RetryerConfig<TData, TError>
+): Retryer<TData> {
+  let isRetryCancelled = false
+  let failureCount = 0
+  let isResolved = false
+  let continueFn: ((value?: unknown) => boolean) | undefined
+  let promiseResolve: (data: TData) => void
+  let promiseReject: (error: TError) => void
+
+  const promise = new Promise<TData>((outerResolve, outerReject) => {
+    promiseResolve = outerResolve
+    promiseReject = outerReject
+  })
+
+  const resolve = (value: any) => {
+    if (!isResolved) {
+      isResolved = true
+      config.onSuccess?.(value)
+      continueFn?.()
+      promiseResolve(value)
+    }
+  }
+
+  const reject = (value: any) => {
+    if (!isResolved) {
+      isResolved = true
+      config.onError?.(value)
+      continueFn?.()
+      promiseReject(value)
+    }
+  }
+
+  // Create loop function
+  const run = () => {
+    // Do nothing if already resolved
+    if (isResolved) {
+      return
+    }
+
+    let promiseOrValue: any
+
+    // Execute query
+    try {
+      promiseOrValue = config.fn()
+    } catch (error) {
+      promiseOrValue = Promise.reject(error)
+    }
+
+    Promise.resolve(promiseOrValue)
+      .then(resolve)
+      .catch((error) => {
+        // ...
+      })
+  }
+
+  // Start loop
+  if (canFetch(config.networkMode)) {
+    run()
+  } else {
+    pause().then(run)
+  }
+
+  return {
+    promise,
+    cancel,
+    continue: () => {
+      const didContinue = continueFn?.()
+      return didContinue ? promise : Promise.resolve()
+    },
+    cancelRetry,
+    continueRetry,
+  }
+}
+```
+
+#### 구독자는 누구?
+
+`Query` 를 구독하는 구독자는 누구이고, 또 어떻게 구독 과정이 발생하는 것인지 의문이 들 수 있는데요.  
+아래 코드를 살펴보면, 구독자는 `QueryObserver` 라는 것을 확인할 수 있습니다.
+
+그리고 이 `addObserver` 가 호출되는 시점은 QueryObserver가 구독되는 시점입니다.
+
+```ts {4} showLineNumbers
+export class Query extends Removable {
+  #observers: Array<QueryObserver<any, any, any, any, any>>
+
+  addObserver(observer: QueryObserver<any, any, any, any, any>): void {
+    if (!this.#observers.includes(observer)) {
+      this.#observers.push(observer)
+
+      // Stop the query from being garbage collected
+      this.clearGcTimeout()
+
+      this.#cache.notify({ type: 'observerAdded', query: this, observer })
+    }
+  }
+}
+```
+
+### QueryObserver
+
+QueryObserver는 쿼리의 상태 변화를 감지하면 새로운 결과값을 만들어내고 구독자들에게 알리는 역할을 수행합니다.
+
+리액트에서는 `useQuery` 훅을 사용한 컴포넌트가 `QueryObserver` 의 구독자가 됩니다.
+
+- **currentQuery**: `QueryObserver` 가 구독하고 있는 `Query` 객체입니다.
+- **currentResult**: `QueryObserver` 가 만들어낸 결과값입니다.
+
+중요한 부분은 리액트 컴포넌트가 `useQuery` 를 사용해서 `QueryObserver` 객체를 생성하면, `onSubscribe` 메소드가 동작한다는 점입니다.
+
+- 12번 라인: `Query` 객체의 `addObserver` 메소드를 호출해서 `Query` 를 구독합니다.
+- 14~18번 라인: 마운트 시 데이터를 패칭해야 한다면 `executeFetch` 메소드를 호출하고, 그렇지 않다면 `updateResult` 메소드를 호출합니다.
+
+```ts {12, 14-18} showLineNumbers
+export class QueryObserver extends Subscribable<QueryObserverListener> {
+  #client: QueryClient
+  #currentQuery: Query<TQueryFnData, TError, TQueryData, TQueryKey> = undefined!
+  #currentResult: QueryObserverResult<TData, TError> = undefined!
+
+  #staleTimeoutId?: ReturnType<typeof setTimeout>
+  #refetchIntervalId?: ReturnType<typeof setInterval>
+  #currentRefetchInterval?: number | false
+
+  protected onSubscribe(): void {
+    if (this.listeners.size === 1) {
+      this.#currentQuery.addObserver(this)
+
+      if (shouldFetchOnMount(this.#currentQuery, this.options)) {
+        this.#executeFetch()
+      } else {
+        this.updateResult()
+      }
+
+      this.#updateTimers()
+    }
+  }
+
+  protected onUnsubscribe(): void {
+    if (!this.hasListeners()) {
+      this.destroy()
+    }
+  }
+
+  destroy(): void {
+    this.listeners = new Set()
+    this.#clearStaleTimeout()
+    this.#clearRefetchInterval()
+    this.#currentQuery.removeObserver(this)
+  }
+}
+```
+
+`executeFetch` 메소드는 아래처럼 작성되어 있습니다.
+
+- **4번 라인**: 패칭을 시도하려는 쿼리가 `gcTime` 이 지나서 삭제되었을 경우를 대비해 쿼리 객체를 `build` 합니다.
+- **7번 라인**: 쿼리에 등록된 `queryFn` 을 실행하는 `fetch` 요청을 호출합니다.
+
+```ts {4, 7} showLineNumbers
+export class QueryObserver extends Subscribable<QueryObserverListener> {
+  #executeFetch(fetchOptions?: ObserverFetchOptions): Promise<TQueryData | undefined> {
+    // Make sure we reference the latest query as the current one might have been removed
+    this.#updateQuery()
+
+    // Fetch
+    let promise: Promise<TQueryData | undefined> = this.#currentQuery.fetch(
+      this.options as QueryOptions<TQueryFnData, TError, TQueryData, TQueryKey>,
+      fetchOptions
+    )
+
+    if (!fetchOptions?.throwOnError) {
+      promise = promise.catch(noop)
+    }
+
+    return promise
+  }
+}
+```
+
+또한 `createResult` 메소드로 QueryObserver가 반환하는 결과를 만들어냅니다.  
+반환 값을 살펴보면 우리가 흔하게 사용해왔던 `useQuery` 의 반환 값과 동일하다는 것을 확인할 수 있습니다.
+
+이 메소드는 `updateResult` 로 데이터를 업데이트할 때마다 호출됩니다.
+
+```ts showLineNumbers
+export class QueryObserver extends Subscribable<QueryObserverListener> {
+  protected createResult(
+    query: Query<TQueryFnData, TError, TQueryData, TQueryKey>,
+    options: QueryObserverOptions<TQueryFnData, TError, TData, TQueryData, TQueryKey>
+  ): QueryObserverResult<TData, TError> {
+    const prevQuery = this.#currentQuery
+    const prevOptions = this.options
+    const prevResult = this.#currentResult as QueryObserverResult<TData, TError> | undefined
+    const prevResultState = this.#currentResultState
+    const prevResultOptions = this.#currentResultOptions
+    const queryChange = query !== prevQuery
+    const queryInitialState = queryChange ? query.state : this.#currentQueryInitialState
+
+    const { state } = query
+    let newState = { ...state }
+    let isPlaceholderData = false
+    let data: TData | undefined
+
+    let { error, errorUpdatedAt, status } = newState
+
+    // Select data if needed
+    if (options.select && newState.data !== undefined) {
+      // Memoize select result
+      if (
+        prevResult &&
+        newState.data === prevResultState?.data &&
+        options.select === this.#selectFn
+      ) {
+        data = this.#selectResult
+      } else {
+        try {
+          this.#selectFn = options.select
+          data = options.select(newState.data)
+          data = replaceData(prevResult?.data, data, options)
+          this.#selectResult = data
+          this.#selectError = null
+        } catch (selectError) {
+          this.#selectError = selectError as TError
+        }
+      }
+    }
+    // Use query data
+    else {
+      data = newState.data as unknown as TData
+    }
+
+    const isFetching = newState.fetchStatus === 'fetching'
+    const isPending = status === 'pending'
+    const isError = status === 'error'
+
+    const isLoading = isPending && isFetching
+    const hasData = data !== undefined
+
+    const result: QueryObserverBaseResult<TData, TError> = {
+      status,
+      fetchStatus: newState.fetchStatus,
+      isPending,
+      isSuccess: status === 'success',
+      isError,
+      isInitialLoading: isLoading,
+      isLoading,
+      data,
+      dataUpdatedAt: newState.dataUpdatedAt,
+      error,
+      errorUpdatedAt,
+      failureCount: newState.fetchFailureCount,
+      failureReason: newState.fetchFailureReason,
+      errorUpdateCount: newState.errorUpdateCount,
+      isFetched: newState.dataUpdateCount > 0 || newState.errorUpdateCount > 0,
+      isFetchedAfterMount:
+        newState.dataUpdateCount > queryInitialState.dataUpdateCount ||
+        newState.errorUpdateCount > queryInitialState.errorUpdateCount,
+      isFetching,
+      isRefetching: isFetching && !isPending,
+      isLoadingError: isError && !hasData,
+      isPaused: newState.fetchStatus === 'paused',
+      isPlaceholderData,
+      isRefetchError: isError && hasData,
+      isStale: isStale(query, options),
+      refetch: this.refetch,
+    }
+
+    return result as QueryObserverResult<TData, TError>
+  }
+}
+```
+
+마지막으로, `QueryObserver` 를 구독하고 있는 리액트 컴포넌트에게 변화를 알리기 위해서 내부에 `notify` 메소드가 존재합니다.
+
+`updateResult` 메소드가 호출되어서 결과 값이 반영되면 최종적으로 `notify` 메소드를 호출해서 구독하고 있는 컴포넌트들이 리렌더링될 수 있게 알립니다.
+
+- **5~8번 라인**: 이 QueryObserver를 구독하고 있는 컴포넌트들을 리렌더링 시킵니다.
+- **12~15번 라인**: QueryCache가 쿼리 데이터의 변화를 알아챌 수 있도록 알립니다.
+
+```ts {5-8, 12-15} showLineNumbers
+export class QueryObserver extends Subscribable<QueryObserverListener> {
+  #notify(notifyOptions: NotifyOptions): void {
+    notifyManager.batch(() => {
+      // First, trigger the listeners
+      if (notifyOptions.listeners) {
+        this.listeners.forEach((listener) => {
+          listener(this.#currentResult)
+        })
+      }
+
+      // Then the cache listeners
+      this.#client.getQueryCache().notify({
+        query: this.#currentQuery,
+        type: 'observerResultsUpdated',
+      })
+    })
+  }
+}
+```
+
+## 마무리
+
+이렇게 TanStack Query의 코어에는 어떤 요소들이 있고, 각각 어떻게 이어져있는지를 알아보았습니다.  
+다음 포스트에서는 리액트에서 `useQuery` 를 호출하는 시점부터의 실행 흐름을 알아보고자 합니다.
+
+## References
+
+[[React Query] useQuery 동작원리(1)](https://www.timegambit.com/blog/digging/react-query/01?disclosure=true)  
+[Inside React Query](https://tkdodo.eu/blog/inside-react-query)
