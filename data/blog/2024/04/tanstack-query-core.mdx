@@ -1,7 +1,7 @@
 ---
 title: TanStack Query의 코어 살펴보기
-date: '2024-04-16'
-lastmod: '2024-04-16'
+date: '2024-04-17'
+lastmod: '2024-04-17'
 tags: ['tanstack query']
 draft: false
 summary: '@tanstack/query-core가 구현되어 있는 내용을 살펴봤습니다.'
@@ -19,7 +19,7 @@ series: TanStack Query 동작 원리 살펴보기
 
 ## Core와 Adapter
 
-![TanStack Query 아키텍처 (출처: TKdodo's Blog)](/static/images/2024/04/tanstack-query-core/react-query-architecture.png)
+![TanStack Query 아키텍처 (출처: TKDodo's Blog)](/static/images/2024/04/tanstack-query-core/react-query-architecture.png)
 
 ```
 📁 packages
@@ -43,15 +43,17 @@ series: TanStack Query 동작 원리 살펴보기
 
 ### Subscribable
 
+![Subscribable](/static/images/2024/04/tanstack-query-core/subscribable.png)
+
 구독 가능한 대상임을 나타내는 추상 클래스입니다.  
 이 클래스를 상속하면 자신을 구독하는 구독자를 가질 수 있게 되고, 자신의 상태가 변화하면 구독자들에게 변화를 알릴 수 있습니다. `QueryObserver` 와 `QueryCache` 가 이 추상 클래스를 상속하고 있습니다.
 
-핵심적으로 살펴보면 좋을 부분은 `subscribe` 함수입니다.  
-해당 함수의 인자로 구독자를 전달받으면, `listeners` 에 등록되게 됩니다.
+- `subscribe`: 해당 함수의 인자로 구독자를 전달받으면, `listeners` 에 등록되게 됩니다. 리액트에서는 `useBaseQuery` 훅에서 이 함수를 사용하여 구독하고 있습니다.
+- `onSubscribe`: 이 클래스를 상속한 곳에서 이 메소드를 오버라이딩하면, 구독 정보가 변경될 때 수행해야 할 동작을 주입할 수 있습니다.
 
 > subscribe 함수가 구독을 정리하는 함수를 반환하는 이유는 React의 `useSyncExternalStore` 혹은 `useEffect` 훅을 사용하여 구독할 때 클린업 함수에 구독을 정리하는 내용을 작성해야 하기 때문입니다.
 
-```ts {2, 10-17} showLineNumbers
+```ts {2, 10-17, 24} showLineNumbers
 export class Subscribable<TListener extends Function = Listener> {
   protected listeners: Set<TListener>
 
@@ -160,8 +162,11 @@ import { useSyncExternalStore } from 'react'
 
 ### QueryClient
 
-많이 생략했지만 [QueryClient에서 제공하는 API](https://tanstack.com/query/latest/docs/reference/QueryClient) 가 모두 메소드로 구현 되어 있다는 점을 확인할 수 있습니다.
-`queryCache` 과 `mutationCache` 를 내부의 프로퍼티로 가지고 있기 때문에 캐싱된 데이터에 접근하고 조작하는 API를 제공할 수 있습니다.
+![QueryClient](/static/images/2024/04/tanstack-query-core/query-client.png)
+
+TanStack Query가 캐싱하고 있는 QueryCache와 MutationCache를 조작하는 여러 메소드를 제공하는 클라이언트 클래스입니다. `queryCache` 과 `mutationCache` 를 내부의 프로퍼티로 가지고 있기 때문에 캐싱된 데이터에 접근하고 조작하는 API를 제공할 수 있습니다.
+
+많이 생략했지만 [QueryClient에서 제공하는 API](https://tanstack.com/query/latest/docs/reference/QueryClient) 가 모두 메소드로 구현 되어 있습니다.
 
 > 24줄을 살펴보면, 캐시에 저장할 데이터를 바로 저장하는 것이 아니라 콜백을 모아서 한번에 처리하는 배칭이 적용되어있다는 점을 확인할 수 있는데요. 이 부분은 `notifyManager` 에 대해서 살펴볼 때 후술하겠습니다.
 
@@ -208,13 +213,7 @@ export class QueryClient {
 
 ```ts {18, 20-22} showLineNumbers
 export class QueryClient {
-  fetchQuery<
-    TQueryFnData,
-    TError = DefaultError,
-    TData = TQueryFnData,
-    TQueryKey extends QueryKey = QueryKey,
-    TPageParam = never,
-  >(
+  fetchQuery(
     options: FetchQueryOptions<TQueryFnData, TError, TData, TQueryKey, TPageParam>
   ): Promise<TData> {
     const defaultedOptions = this.defaultQueryOptions(options)
@@ -235,9 +234,11 @@ export class QueryClient {
 
 ### QueryCache
 
-`QueryCache` 내부에는 `queries` 라는 Map 객체가 존재합니다. 이 프로퍼티는 **같은 key를 갖는 쿼리는 단일 객체만 존재하도록** 관리하는 역할을 합니다.
+![QueryCache](/static/images/2024/04/tanstack-query-core/query-cache.png)
 
-17줄의 `build` 메소드는 `queryKey` 를 `queryHash` 로 변환한 뒤, Map에 이미 존재하는 쿼리 객체가 있다면 해당 객체를 재활용하고, 없다면 새로운 객체를 생성합니다.
+`QueryCache` 는 여러 쿼리 데이터를 보관하고 있는 역할을 합니다. 내부에 `queries` 라는 Map 객체가 존재하는데, 이 프로퍼티는 **같은 key를 갖는 쿼리는 단일 객체만 존재하도록** 관리하는 역할을 합니다.
+
+> 17줄의 `build` 메소드는 `queryKey` 를 `queryHash` 로 변환한 뒤, Map에 이미 존재하는 쿼리 객체가 있다면 해당 객체를 재활용하고, 없다면 새로운 객체를 생성합니다.
 
 ```ts {10, 14, 17, 22-24, 27, 35} showLineNumbers
 export interface QueryStore {
@@ -350,9 +351,14 @@ export class QueryCache extends Subscribable<QueryCacheListener> {
 
 ### Query
 
-쿼리의 상태를 관리하는 클래스입니다.
+![Query](/static/images/2024/04/tanstack-query-core/query.png)
 
-몇 가지 프로퍼티와 메소드를 생략했지만, 핵심은 `state` 라는 프로퍼티에 해당 쿼리가 표현해야 할 데이터와 상태를 나타내고, `#dispatch` 라는 내부 메소드를 통해서 상태를 업데이트한 뒤, 구독자들에게 변화를 알린다는 점입니다.
+쿼리의 상태를 관리하는 클래스입니다.
+핵심은 `state` 라는 프로퍼티에 해당 쿼리가 표현해야 할 데이터와 상태를 나타내고, `#dispatch` 라는 내부 메소드를 통해서 상태를 업데이트한 뒤, 구독자들에게 변화를 알린다는 점입니다.
+
+- **state**: 해당 쿼리가 표현해야 할 데이터와 상태를 나타냅니다.
+- **fetch**: 사용자가 등록한 `queryFn` 을 호출하여, 네트워크 요청이 발생하도록 하는 메소드입니다.
+- **#dispatch**: `state` 를 업데이트하고, 구독자들에게 변화를 알리는 메소드입니다.
 
 ```ts {1, 25, 29, 40, 43-47} showLineNumbers
 export interface QueryState<TData = unknown, TError = DefaultError> {
@@ -406,6 +412,8 @@ export class Query extends Removable {
   }
 }
 ```
+
+#### fetch
 
 또한 `queryFn` 을 호출해서 실제 네트워크 요청을 수행할 수 있는 `fetch` 메소드가 존재하는 곳이기도 합니다.
 
@@ -762,6 +770,14 @@ export class QueryObserver extends Subscribable<QueryObserverListener> {
 ## 마무리
 
 이렇게 TanStack Query의 코어에는 어떤 요소들이 있고, 각각 어떻게 이어져있는지를 알아보았습니다.  
+소스코드를 살펴봤던 내용을 다시 정리하자면,
+
+1. `useBaseQuery` 를 선언한 컴포넌트마다 `QueryObserver` 가 생성됩니다.
+2. `QueryObserver` 는 하나의 `Query` 클래스를 구독하고 있습니다. 쿼리에 변화를 감지하면 컴포넌트가 리렌더링될 수 있도록 합니다.
+3. `QueryClient` 는 라이브러리 내부에서 캐싱하고 있는 데이터를 사용자가 조작할 수 있는 API를 제공합니다. 이를 위해 내부의 프로퍼티로 `QueryCache`, `MutationCache` 를 가지고 있습니다.
+4. `QueryCache` 는 동일한 쿼리 해쉬값을 갖고 있는 `Query` 객체를 단일로 관리하고자 `Map` 자료구조를 사용하고 있습니다.
+5. `Query` 는 각 쿼리가 갖고 있는 상태의 관리 및 네트워크 요청으로 가져오는 작업을 수행합니다.
+
 다음 포스트에서는 리액트에서 `useQuery` 를 호출하는 시점부터의 실행 흐름을 알아보고자 합니다.
 
 ## References
