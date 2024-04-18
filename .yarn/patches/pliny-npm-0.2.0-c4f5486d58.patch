@@ -1,0 +1,70 @@
+diff --git a/chunk-D37QBQK7.js b/chunk-D37QBQK7.js
+index b59c87ba1c8136d4f2ceb9d75c52cf994ca3e0e0..6721214144c50b8c09120435c3123c709e7d4423 100644
+--- a/chunk-D37QBQK7.js
++++ b/chunk-D37QBQK7.js
+@@ -7,26 +7,30 @@ import { remark } from 'remark';
+ var emptyOptions = {};
+ function toString(value, options) {
+   const settings = options || emptyOptions;
+-  const includeImageAlt = typeof settings.includeImageAlt === "boolean" ? settings.includeImageAlt : true;
+-  const includeHtml = typeof settings.includeHtml === "boolean" ? settings.includeHtml : true;
++  const includeImageAlt =
++    typeof settings.includeImageAlt === 'boolean'
++      ? settings.includeImageAlt
++      : true;
++  const includeHtml =
++    typeof settings.includeHtml === 'boolean' ? settings.includeHtml : true;
+   return one(value, includeImageAlt, includeHtml);
+ }
+ function one(value, includeImageAlt, includeHtml) {
+   if (node(value)) {
+-    if ("value" in value) {
+-      return value.type === "html" && !includeHtml ? "" : value.value;
++    if ('value' in value) {
++      return value.type === 'html' && !includeHtml ? '' : value.value;
+     }
+-    if (includeImageAlt && "alt" in value && value.alt) {
++    if (includeImageAlt && 'alt' in value && value.alt) {
+       return value.alt;
+     }
+-    if ("children" in value) {
++    if ('children' in value) {
+       return all(value.children, includeImageAlt, includeHtml);
+     }
+   }
+   if (Array.isArray(value)) {
+     return all(value, includeImageAlt, includeHtml);
+   }
+-  return "";
++  return '';
+ }
+ function all(values, includeImageAlt, includeHtml) {
+   const result = [];
+@@ -34,21 +38,21 @@ function all(values, includeImageAlt, includeHtml) {
+   while (++index < values.length) {
+     result[index] = one(values[index], includeImageAlt, includeHtml);
+   }
+-  return result.join("");
++  return result.join('');
+ }
+ function node(value) {
+-  return Boolean(value && typeof value === "object");
++  return Boolean(value && typeof value === 'object');
+ }
+-var slugger = new GithubSlugger();
+ function remarkTocHeadings() {
++  var slugger = new GithubSlugger();
+   return (tree, file) => {
+     const toc = [];
+-    visit(tree, "heading", (node2) => {
++    visit(tree, 'heading', (node2) => {
+       const textContent = toString(node2);
+       toc.push({
+         value: textContent,
+-        url: "#" + slugger.slug(textContent),
+-        depth: node2.depth
++        url: '#' + slugger.slug(textContent),
++        depth: node2.depth,
+       });
+     });
+     file.data.toc = toc;
