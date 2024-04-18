@@ -10,9 +10,9 @@ const Image = ({ ...props }: ImageProps) => {
   }).toString()
 
   return (
-    <figure>
+    <figure className="mx-auto w-fit">
       <Link href={`/image?${queryString}`} target="_blank">
-        <NextImage className="mx-auto my-0" {...props} />
+        <NextImage className="my-0" {...props} />
       </Link>
       <figcaption className="text-center">{alt}</figcaption>
     </figure>

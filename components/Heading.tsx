@@ -17,14 +17,14 @@ const Heading = ({ as: Comp, children, ...props }: HeadingProps) => {
   }
 
   return (
-    <Comp {...props}>
+    <Comp className="w-fit" {...props}>
       <Link
         className={`flex items-center gap-2 text-black no-underline transition-all duration-200 hover:text-link [&>span]:invisible [&>span]:hover:visible ${weights[Comp]}`}
         href={`#${props.id}`}
         replace
       >
         {children?.[1]}
-        <span>
+        <span className="relative">
           <svg viewBox="0 0 16 16" height="0.7em" width="0.7em">
             <g strokeWidth="1.2" fill="none" stroke="currentColor">
               <path
