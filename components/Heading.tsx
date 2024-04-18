@@ -21,6 +21,7 @@ const Heading = ({ as: Comp, children, ...props }: HeadingProps) => {
       <Link
         className={`flex items-center gap-2 text-black no-underline transition-all duration-200 hover:text-link [&>span]:invisible [&>span]:hover:visible ${weights[Comp]}`}
         href={`#${props.id}`}
+        replace
       >
         {children?.[1]}
         <span>

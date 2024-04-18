@@ -2,6 +2,7 @@ import { ReactNode } from 'react'
 import Image from 'next/image'
 import { CoreContent } from 'pliny/utils/contentlayer'
 import type { Blog, Authors } from 'contentlayer/generated'
+import clsx from 'clsx'
 import Comments from '@/components/Comments'
 import Link from '@/components/Link'
 import PageTitle from '@/components/PageTitle'
@@ -9,7 +10,7 @@ import SectionContainer from '@/components/SectionContainer'
 import Tag from '@/components/Tag'
 import siteMetadata from '@/data/siteMetadata'
 import ScrollTopAndComment from '@/components/ScrollTopAndComment'
-import clsx from 'clsx'
+import TableOfContents from '@/components/TableOfContents'
 
 const editUrl = (path) => `${siteMetadata.siteRepo}/blob/main/data/${path}`
 const discussUrl = (path) =>
@@ -23,7 +24,15 @@ const postDateTemplate: Intl.DateTimeFormatOptions = {
 }
 
 interface LayoutProps {
-  content: CoreContent<Blog>
+  content: CoreContent<
+    Omit<Blog, 'toc'> & {
+      toc: Array<{
+        value: string
+        url: string
+        depth: number
+      }>
+    }
+  >
   authorDetails: CoreContent<Authors>[]
   seriesContents: { path: string; title: string }[]
   next?: { path: string; title: string }
@@ -39,7 +48,7 @@ export default function PostLayout({
   prev,
   children,
 }: LayoutProps) {
-  const { filePath, path, slug, date, title, tags, series, readingTime } = content
+  const { filePath, path, slug, date, title, tags, series, readingTime, toc } = content
   const basePath = path.split('/')[0]
 
   return (
@@ -193,6 +202,7 @@ export default function PostLayout({
                   &larr; Back to the blog
                 </Link>
               </div>
+              <TableOfContents toc={toc} />
             </footer>
           </div>
         </div>

@@ -12,7 +12,7 @@ series: TanStack Query 동작 원리 살펴보기
 
 [이전](/blog/2023/12/state-management-and-observer)에 `TanStack Query` 가 관리하는 상태의 변화를 리액트 컴포넌트가 어떻게 감지하고 리렌더링하는지를 알아보면서 `useSyncExternalStore` 훅으로 외부의 상태를 구독하고 있다는 점을 살펴본 적이 있었습니다.
 
-최근 `TanStack Query` 가 캐싱을 어떻게 처리하고 있는지 알고 있는지에 대한 질문을 받았는데, 평소에 좋아하고 자주 활용하는 라이브러리이지만 내부 동작까지 깊게 살펴보진 못했던 것 같아서 이번에 `@tanstack/query-core` 라이브러리를 살펴보게 되었습니다.
+최근에 `TanStack Query` 가 캐싱을 어떻게 처리하고 있는지에 대한 질문을 받았는데, 평소에 좋아하고 자주 활용하는 라이브러리이지만 내부 동작까지 깊게 살펴보진 못했던 것 같아서 이번에 `@tanstack/query-core` 라이브러리를 살펴보게 되었습니다.
 
 이번 포스팅에서는 TanStack Query에서 사용하고 있는 코어 요소들의 관계에 대해 알아보고, 내부적으로 캐싱을 어떻게 처리하고 있는지에 대해서 작성해보고자 합니다.  
 (`@tanstack/react-query` 5.29.2 버전을 기준으로 작성되었습니다.)
