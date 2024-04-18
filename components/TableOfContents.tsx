@@ -2,7 +2,7 @@
 
 import clsx from 'clsx'
 import Link from 'next/link'
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 
 interface TableOfContentsProps {
   toc: Array<{
@@ -10,10 +10,6 @@ interface TableOfContentsProps {
     url: string
     depth: number
   }>
-}
-
-const parseHref = (url: string) => {
-  return Number(url.split('-').at(-1)) ? url.split('-').slice(0, -1).join('-') : url
 }
 
 const createIntersectionObserver = (callback: (entry: IntersectionObserverEntry) => void) => {
@@ -38,7 +34,7 @@ const TableOfContents = ({ toc }: TableOfContentsProps) => {
     })
 
     const headingElements = toc.map((item) =>
-      document.getElementById(parseHref(item.url.slice(1, item.url.length)))
+      document.getElementById(item.url.slice(1, item.url.length))
     )
 
     headingElements.forEach((element) => {
@@ -57,10 +53,10 @@ const TableOfContents = ({ toc }: TableOfContentsProps) => {
           key={item.url}
           className={clsx('mb-2 text-gray-400 transition-all', paddings[item.depth - firstLevel], {
             ['-translate-x-2 font-bold text-red-500']:
-              activeId === parseHref(item.url.slice(1, item.url.length)),
+              activeId === item.url.slice(1, item.url.length),
           })}
         >
-          <Link href={parseHref(item.url)} replace>
+          <Link href={item.url} replace>
             {item.value}
           </Link>
         </li>
