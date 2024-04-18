@@ -1668,14 +1668,14 @@ __metadata:
   linkType: hard
 
 "@citation-js/core@npm:^0.7.1":
-  version: 0.7.9
-  resolution: "@citation-js/core@npm:0.7.9"
+  version: 0.7.11
+  resolution: "@citation-js/core@npm:0.7.11"
   dependencies:
     "@citation-js/date": ^0.5.0
     "@citation-js/name": ^0.4.2
     fetch-ponyfill: ^7.1.0
     sync-fetch: ^0.4.1
-  checksum: 18b4a97d9b1c622a28b480e10972ef6ef3ff3d5403e28652a89b09a8074d0ffb5b30b7650a65caf0b164803cfadc874dcf5e34c562306cd4ad1c0fea68b19b3b
+  checksum: 12355998b8e7352610c6e637a959ae7e305581b6a48d19a353cf17a441eb669193753deb9f969387fa957c3e2a446da3aca01163f99b6744926ca17ed813c9b9
   languageName: node
   linkType: hard
 
@@ -1694,39 +1694,39 @@ __metadata:
   linkType: hard
 
 "@citation-js/plugin-bibjson@npm:^0.7.2":
-  version: 0.7.9
-  resolution: "@citation-js/plugin-bibjson@npm:0.7.9"
+  version: 0.7.11
+  resolution: "@citation-js/plugin-bibjson@npm:0.7.11"
   dependencies:
     "@citation-js/date": ^0.5.0
     "@citation-js/name": ^0.4.2
   peerDependencies:
     "@citation-js/core": ^0.7.0
-  checksum: af5cbd016c78eb7e807728f203ca6049973336964ef3864035f0710bf032dfd52f8e540680ddfe7ab1be6e3eac2149a529577d29efb1ef363a90d72370ef463d
+  checksum: b51148f29c47d1f86a91ce3f7e1d253ab40223edee7d8d57696af64aed2351bd8618edd227344003f87f80baa26b2c0c7b3599465a3d6969e4eebf73879be58f
   languageName: node
   linkType: hard
 
 "@citation-js/plugin-bibtex@npm:^0.7.2":
-  version: 0.7.9
-  resolution: "@citation-js/plugin-bibtex@npm:0.7.9"
+  version: 0.7.11
+  resolution: "@citation-js/plugin-bibtex@npm:0.7.11"
   dependencies:
     "@citation-js/date": ^0.5.0
     "@citation-js/name": ^0.4.2
     moo: ^0.5.1
   peerDependencies:
     "@citation-js/core": ^0.7.0
-  checksum: ccc316017092be43bf760d4488432e1469e5a976fbe44b0ecd8b0591870dca8ad64dddb25a34b64bf20365fa49e71c972a8abf95ee48d6081681a18b91830466
+  checksum: ff37290ee5e31ee4d2f7634da87b69a9a692bb8b3f46a7cd784d6a8c5b49889c50723a70ae1508eadc9f4072cf8c1eb3b42442f2dd2422c7877b7ff54adbce77
   languageName: node
   linkType: hard
 
 "@citation-js/plugin-csl@npm:^0.7.2":
-  version: 0.7.9
-  resolution: "@citation-js/plugin-csl@npm:0.7.9"
+  version: 0.7.11
+  resolution: "@citation-js/plugin-csl@npm:0.7.11"
   dependencies:
     "@citation-js/date": ^0.5.0
     citeproc: ^2.4.6
   peerDependencies:
     "@citation-js/core": ^0.7.0
-  checksum: 5fd5af92bcc7259de03263ad1540eafe4de3c13bc32313b0ef7e7cdb8ad1a7a47971deecae743654b69f4fa5b0492551eaaf86081267a1f7b49522ddcee36add
+  checksum: fd353b86764849d2ae39d32a71cc8f4a3a120235d6218f865b06e3c41e8afb59e1d074d41ad2110432040d59c2d67f1dcac44d276ec51b414c7e32d4d9d4802d
   languageName: node
   linkType: hard
 
@@ -3236,12 +3236,12 @@ __metadata:
   linkType: hard
 
 "@types/react@npm:^18.2.73":
-  version: 18.2.75
-  resolution: "@types/react@npm:18.2.75"
+  version: 18.2.79
+  resolution: "@types/react@npm:18.2.79"
   dependencies:
     "@types/prop-types": "*"
     csstype: ^3.0.2
-  checksum: f77322720744beba6650462c0d75ccc0be27c176bd7b2aff32039ea30e498a78fe6dbce4a1c3fdbf592ccc01286059f332a294a3b6975dbb0d8d5999718ece38
+  checksum: 85aa96e0e88725c84d8fc5f04f10a4da6a1f507dde33557ac9cc211414756867721264bfefd9e02bae1288ce2905351d949b652b931e734ea24519ee5c625138
   languageName: node
   linkType: hard
 
@@ -4022,9 +4022,9 @@ __metadata:
   linkType: hard
 
 "caniuse-lite@npm:^1.0.30001579, caniuse-lite@npm:^1.0.30001587, caniuse-lite@npm:^1.0.30001599":
-  version: 1.0.30001608
-  resolution: "caniuse-lite@npm:1.0.30001608"
-  checksum: 7ae62689ca358cd3bdb89b2db9b4841812299f8a0b3ab94b52e4548778bd5740814617c0e0b2504b6bfaf47acc2472e1730393bd2027d646acbe8dc8206ad9e7
+  version: 1.0.30001611
+  resolution: "caniuse-lite@npm:1.0.30001611"
+  checksum: c5beb4a0aaabe24b01a577122c61e20ca0614d2e3adfd2e4de8dbdb8529eb9dba9922be8fd8be9eba48b6cadaada0b338aa3e0d0a17f42f6b3e9a614492c029a
   languageName: node
   linkType: hard
 
@@ -4372,11 +4372,11 @@ __metadata:
   linkType: hard
 
 "core-js-compat@npm:^3.31.0, core-js-compat@npm:^3.36.1":
-  version: 3.36.1
-  resolution: "core-js-compat@npm:3.36.1"
+  version: 3.37.0
+  resolution: "core-js-compat@npm:3.37.0"
   dependencies:
     browserslist: ^4.23.0
-  checksum: c9109bd599a97b5d20f25fc8b8339b8c7f3fca5f9a1bebd397805383ff7699e117786c7ffe0f7a95058a6fa5e0e1435d4c10e5cda6ad86ce1957986bb6580562
+  checksum: cab5078e98625f889fd9bbbb19e84cb408f31c87e68302d380db0d26ae8e35c1b38cde084358ff345d4aa461af5f3c60d8a913a5b30bff3a83b4b7859374db36
   languageName: node
   linkType: hard
 
@@ -4773,9 +4773,9 @@ __metadata:
   linkType: hard
 
 "electron-to-chromium@npm:^1.4.668":
-  version: 1.4.733
-  resolution: "electron-to-chromium@npm:1.4.733"
-  checksum: 2fd0efec8f3d7c1a503dd57b18a66ee73f5515e641278b50704833c37543e23a5b03f25a98b75fba06397dd66be70ed5bd7804dafaf9fede4e50dec2b4ca9fd1
+  version: 1.4.740
+  resolution: "electron-to-chromium@npm:1.4.740"
+  checksum: be279e39c79c500b9b72a471781b91e9a3c339124afa93a7429448bf17256258ecbb0f61550e26ad7ecff5767786d1a78738c7c6e468d3458679989a8d96c9bb
   languageName: node
   linkType: hard
 
@@ -6347,14 +6347,14 @@ __metadata:
   linkType: hard
 
 "hast-util-to-text@npm:^4.0.0":
-  version: 4.0.1
-  resolution: "hast-util-to-text@npm:4.0.1"
+  version: 4.0.2
+  resolution: "hast-util-to-text@npm:4.0.2"
   dependencies:
     "@types/hast": ^3.0.0
     "@types/unist": ^3.0.0
     hast-util-is-element: ^3.0.0
     unist-util-find-after: ^5.0.0
-  checksum: 30db007e180c82eab7d69ecb14b6fbcb200b95cd65cad2f5da200f0b8685becb85a788aa0030bb39733245597687d1fb07141b31522cd67917ac49300dee32b4
+  checksum: 72cce08666b86511595d3eef52236b86897cfbac166f2a0752b70b16d1f590b5aa91ea1a553c0d1603f9e0c7e373ceacab381be3d8f176129ad6e301d2a56d94
   languageName: node
   linkType: hard
 
@@ -7246,33 +7246,33 @@ __metadata:
   linkType: hard
 
 "lit-element@npm:^4.0.4":
-  version: 4.0.4
-  resolution: "lit-element@npm:4.0.4"
+  version: 4.0.5
+  resolution: "lit-element@npm:4.0.5"
   dependencies:
     "@lit-labs/ssr-dom-shim": ^1.2.0
     "@lit/reactive-element": ^2.0.4
     lit-html: ^3.1.2
-  checksum: 721b8777436dc4e770fed5fec7a69bf681eb3bc381e4bdcdd2027c7094722d74e4d2f29b9487ef2c08c65beeb0f420d07d05d80c4afcdc59168fb2c5bd1701b2
+  checksum: c6dac74ea4eb88a0b4b086b9363ecd726c477a68fc40963fa1787d3d5d2b543c254b4e20c304ce343883553319a5f5783d6c88d8ecebb33a9a9215beac182c10
   languageName: node
   linkType: hard
 
 "lit-html@npm:^3.1.2":
-  version: 3.1.2
-  resolution: "lit-html@npm:3.1.2"
+  version: 3.1.3
+  resolution: "lit-html@npm:3.1.3"
   dependencies:
     "@types/trusted-types": ^2.0.2
-  checksum: 9a6f0326aea2db7f2af238113b0569d1be69ee085eb9a08e7aafc024e6d85b5ba7ec68bf17f9a82e0cd3373ea49701a00cac8808662aec2c59229330b58456e3
+  checksum: b079d785860378ab1b9d6ba4f5a367c30dc64a98da696b9dd8e4c68bd26f6478aa74099e56062358f2f0fc75e9ee949b1e1723abf85cde00c86d27d56d2d3717
   languageName: node
   linkType: hard
 
 "lit@npm:^3.1.2":
-  version: 3.1.2
-  resolution: "lit@npm:3.1.2"
+  version: 3.1.3
+  resolution: "lit@npm:3.1.3"
   dependencies:
     "@lit/reactive-element": ^2.0.4
     lit-element: ^4.0.4
     lit-html: ^3.1.2
-  checksum: 7776fc5f17a093aafa8d2194725692be2e233d893909722e2fc86ef0bd167f60846fa24054bbca40028bb71262dfa12947e39cb46ad1d0f949dbf0298c7754d1
+  checksum: 17b33c2e6a9d93605766d1c35a8fbb48bd160b103f83b679b34813b1dd868e32a6955f70739d8d2893e68a6e0611ad20a8864b25e99981d2e2c14cc74362a6fc
   languageName: node
   linkType: hard
 
@@ -8154,14 +8154,14 @@ __metadata:
   linkType: hard
 
 "micromark-util-subtokenize@npm:^2.0.0":
-  version: 2.0.0
-  resolution: "micromark-util-subtokenize@npm:2.0.0"
+  version: 2.0.1
+  resolution: "micromark-util-subtokenize@npm:2.0.1"
   dependencies:
     devlop: ^1.0.0
     micromark-util-chunked: ^2.0.0
     micromark-util-symbol: ^2.0.0
     micromark-util-types: ^2.0.0
-  checksum: 77d9c7d59c05a20468d49ce2a3640e9cb268c083ccad02322f26c84e1094c25b44f4b8139ef0a247ca11a4fef7620c5bf82fbffd98acdb2989e79cbe7bd8f1db
+  checksum: 5d338883ad8889c63f9b262b9cae0c02a42088201981d820ae7af7aa6d38fab6585b89fd4cf2206a46a7c4002e41ee6c70e1a3e0ceb3ad8b7adcffaf166b1511
   languageName: node
   linkType: hard
 
@@ -9044,6 +9044,31 @@ __metadata:
   languageName: node
   linkType: hard
 
+"pliny@patch:pliny@npm%3A0.2.0#./.yarn/patches/pliny-npm-0.2.0-c4f5486d58.patch::locator=tailwind-nextjs-starter-blog%40workspace%3A.":
+  version: 0.2.0
+  resolution: "pliny@patch:pliny@npm%3A0.2.0#./.yarn/patches/pliny-npm-0.2.0-c4f5486d58.patch::version=0.2.0&hash=e04531&locator=tailwind-nextjs-starter-blog%40workspace%3A."
+  dependencies:
+    "@docsearch/react": ^3.5.0
+    "@giscus/react": ^3.0.0
+    "@mailchimp/mailchimp_marketing": ^3.0.80
+    contentlayer2: ^0.4.4
+    copyfiles: ^2.4.1
+    github-slugger: ^2.0.0
+    js-yaml: 4.1.0
+    kbar: 0.1.0-beta.45
+    next-contentlayer2: ^0.4.4
+    next-themes: ^0.3.0
+    probe-image-size: ^7.2.3
+    remark: ^15.0.0
+    unist-util-visit: ^5.0.0
+  peerDependencies:
+    next: ">=13.0.0"
+    react: ^17.0.2 || ^18.0.0
+    react-dom: ^17.0.2 || ^18.0.0
+  checksum: 429b03c0a5e2c18617d7a8ed3de3d63a4f61f0c6e7c763ca3c71199cf6ec71fedd959c1cbc306b6feee60063af694c416f2214a3fd4a916c0f0dbc34a58e5f5a
+  languageName: node
+  linkType: hard
+
 "possible-typed-array-names@npm:^1.0.0":
   version: 1.0.0
   resolution: "possible-typed-array-names@npm:1.0.0"
@@ -9170,8 +9195,8 @@ __metadata:
   linkType: hard
 
 "prettier-plugin-tailwindcss@npm:^0.5.13":
-  version: 0.5.13
-  resolution: "prettier-plugin-tailwindcss@npm:0.5.13"
+  version: 0.5.14
+  resolution: "prettier-plugin-tailwindcss@npm:0.5.14"
   peerDependencies:
     "@ianvs/prettier-plugin-sort-imports": "*"
     "@prettier/plugin-pug": "*"
@@ -9220,7 +9245,7 @@ __metadata:
       optional: true
     prettier-plugin-svelte:
       optional: true
-  checksum: f79a6353c813f871c7f5c2d7bbbe77d8e1477fc448ec20d337688659c8ffb454dda1d841b92cb809d171d6128e4dd55acfd02a945bca7d0aa3eb02411a5cd439
+  checksum: 205a774e53cdd9f8e61640ae3b778402758fad3d215fc57dd31172f12cf2b145095f5f973a431d495a6551b638bbb7e54c9f3a49848f0a0f755f5ad975b7c321
   languageName: node
   linkType: hard
 
@@ -9314,11 +9339,11 @@ __metadata:
   linkType: hard
 
 "qs@npm:^6.5.1":
-  version: 6.12.0
-  resolution: "qs@npm:6.12.0"
+  version: 6.12.1
+  resolution: "qs@npm:6.12.1"
   dependencies:
     side-channel: ^1.0.6
-  checksum: ba007fb2488880b9c6c3df356fe6888b9c1f4c5127552edac214486cfe83a332de09a5c40d490d79bb27bef977ba1085a8497512ff52eaac72e26564f77ce908
+  checksum: aa761d99e65b6936ba2dd2187f2d9976afbcda38deb3ff1b3fe331d09b0c578ed79ca2abdde1271164b5be619c521ec7db9b34c23f49a074e5921372d16242d5
   languageName: node
   linkType: hard
 

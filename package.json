@@ -67,5 +67,8 @@
       "prettier --write"
     ]
   },
-  "packageManager": "yarn@3.6.1"
+  "packageManager": "yarn@3.6.1",
+  "resolutions": {
+    "pliny@0.2.0": "patch:pliny@npm%3A0.2.0#./.yarn/patches/pliny-npm-0.2.0-c4f5486d58.patch"
+  }
 }
