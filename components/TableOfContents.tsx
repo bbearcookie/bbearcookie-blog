@@ -3,6 +3,7 @@
 import clsx from 'clsx'
 import Link from 'next/link'
 import React, { useEffect, useRef, useState } from 'react'
+import '@/css/scrollbar.css'
 
 interface TableOfContentsProps {
   toc: Array<{
@@ -30,7 +31,7 @@ const createIntersectionObserver = ({
       })
     },
     {
-      threshold: 0.5,
+      threshold: 0,
     }
   )
 }
@@ -44,7 +45,7 @@ const TableOfContents = ({ toc }: TableOfContentsProps) => {
   const scrollDirection = useRef<'up' | 'down'>('down')
   const prevScrollY = useRef(0)
 
-  const paddings = ['ps-0', 'ps-4', 'ps-8', 'ps-12', 'ps-16', 'ps-20']
+  const paddings = ['ps-4', 'ps-8', 'ps-12', 'ps-16', 'ps-20', 'ps-24']
   const firstLevel = toc.reduce((acc, cur) => (cur.depth < acc ? cur.depth : acc), 5)
 
   useEffect(() => {
@@ -93,7 +94,7 @@ const TableOfContents = ({ toc }: TableOfContentsProps) => {
   }, [])
 
   return (
-    <ul className="sticky top-32 pt-4 text-sm">
+    <ul className="scrollbar sticky top-0 hidden max-h-[100svh] overflow-y-auto overflow-x-clip py-8 pe-8 text-sm xl:block">
       {toc.map((item, i) => (
         <li
           key={item.url}
