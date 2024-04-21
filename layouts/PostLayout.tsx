@@ -115,7 +115,7 @@ export default function PostLayout({
             <div className="divide-y divide-gray-200 dark:divide-gray-700 xl:col-span-3 xl:row-span-2 xl:pb-0">
               <div className="prose max-w-none pb-8 pt-10 dark:prose-invert">
                 {seriesContents.length > 0 && (
-                  <div className="rounded-2xl border-[1px] border-gray-200 bg-[#f6f7f9] p-4 text-sm">
+                  <div className="rounded-2xl border-[1px] border-gray-200 bg-[#f6f7f9] p-4 text-sm dark:bg-inherit">
                     <h3 className="m-0">
                       SERIES: {series} ({seriesContents.length})
                     </h3>
@@ -124,8 +124,8 @@ export default function PostLayout({
                         <li key={p.path}>
                           <Link
                             className={clsx(
-                              'text-gray-500 no-underline transition-all duration-200',
-                              p.path === path && 'font-bold text-primary-600'
+                              'text-gray-500 no-underline transition-all duration-200 dark:text-gray-400',
+                              p.path === path && 'font-bold text-primary-600 dark:text-primary-600'
                             )}
                             href={`/${p.path}`}
                           >
