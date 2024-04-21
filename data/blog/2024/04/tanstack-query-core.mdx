@@ -2,7 +2,7 @@
 title: TanStack Query의 코어 살펴보기
 date: '2024-04-17'
 lastmod: '2024-04-17'
-tags: ['tanstack query']
+tags: ['tanstack query', 'react-query']
 draft: false
 summary: '@tanstack/query-core가 구현되어 있는 내용을 살펴봤습니다.'
 series: TanStack Query 동작 원리 살펴보기
@@ -207,11 +207,11 @@ export class QueryClient {
 ```
 
 또한, 아래 코드는 `fetchQuery` 메소드인데요.  
-`QueryCache` 객체의 `build` 메소드를 호출해서 `Query` 객체를 생성한 뒤, 데이터를 패칭하기 위해 `fetch` 메소드를 호출하고 있다는 점을 확인할 수 있습니다.
+12줄에서 `QueryCache` 객체의 `build` 메소드를 호출해서 `Query` 객체를 생성한 뒤, 데이터를 패칭하기 위해 `fetch` 메소드를 호출하고 있다는 점을 확인할 수 있습니다.
 
-> 20줄의 `isStaleByTime` 메소드를 통해 `staleTime` 만큼의 시간이 지났는지를 체크하여 불필요한 네트워크 요청을 줄였다는 부분도 확인할 수 있습니다.
+> 14줄의 `isStaleByTime` 메소드를 통해 `staleTime` 만큼의 시간이 지났는지를 체크하여 불필요한 네트워크 요청을 줄였다는 부분도 확인할 수 있습니다.
 
-```ts {18, 20-22} showLineNumbers
+```ts {12, 14-16} showLineNumbers
 export class QueryClient {
   fetchQuery(
     options: FetchQueryOptions<TQueryFnData, TError, TData, TQueryKey, TPageParam>
@@ -360,7 +360,7 @@ export class QueryCache extends Subscribable<QueryCacheListener> {
 - **fetch**: 사용자가 등록한 `queryFn` 을 호출하여, 네트워크 요청이 발생하도록 하는 메소드입니다.
 - **#dispatch**: `state` 를 업데이트하고, 구독자들에게 변화를 알리는 메소드입니다.
 
-```ts {1, 25, 29, 40, 43-47} showLineNumbers
+```ts {20, 26, 40, 43-47} showLineNumbers
 export interface QueryState<TData = unknown, TError = DefaultError> {
   data: TData | undefined
   dataUpdateCount: number
@@ -418,7 +418,7 @@ export class Query extends Removable {
 또한 `queryFn` 을 호출해서 실제 네트워크 요청을 수행할 수 있는 `fetch` 메소드가 존재하는 곳이기도 합니다.
 
 - **fetchFn**: `queryFn` 을 호출하는 중첩 함수입니다.
-- **retryer**: `fetch` 함수는 fetchFn 을 직접 호출하지 않고, `retryer` 객체를 거쳐서 처리하는데요. 그 이유는 여러 QueryObserver가 동시에 같은 쿼리를 구독하고 있을 때, 네트워크 요청을 QueryObserver의 갯수만큼 하지 않고 단 한번만 수행하도록 하기 위함입니다.
+- **retryer**: `fetch` 함수는 fetchFn 을 직접 호출하지 않고, `retryer` 객체를 거쳐서 처리하는데요. 그 이유는 여러 QueryObserver가 동시에 같은 쿼리를 구독하고 있을 때, 네트워크 요청을 QueryObserver의 갯수만큼 하는 것이 아니라 단 한번만 수행하도록 하기 위함이기도 하고, 네트워크 요청이 실패했을 때 다시 재요청을 하기 위함입니다.
 
 ```ts {15-17, 29-32} showLineNumbers
 export class Query extends Removable {
