@@ -79,6 +79,7 @@ export default function PostLayout({ content, seriesContents, next, prev, childr
                       {seriesContents.map((p) => (
                         <li key={p.path}>
                           <Link
+                            rel="canonical"
                             className={clsx(
                               'text-gray-500 no-underline transition-all duration-200 dark:text-gray-400',
                               p.path === path && 'font-bold text-primary-600 dark:text-primary-600'
