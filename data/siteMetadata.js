@@ -9,7 +9,7 @@ const siteMetadata = {
   siteUrl: 'https://bbearcookie.vercel.app',
   siteRepo: 'https://github.com/bbearcookie/bbearcookie-blog',
   siteLogo: '/static/images/logo.jpg',
-  socialBanner: '/static/images/twitter-card.png',
+  socialBanner: '/static/images/logo.jpg',
   // mastodon: 'https://mastodon.social/@mastodonuser',
   email: 'sanghoonbear@gmail.com',
   github: 'https://github.com/bbearcookie',
