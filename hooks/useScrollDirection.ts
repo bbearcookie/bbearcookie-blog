@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import throttle from '@/utils/throttle'
 
 type Direction = 'up' | 'down'
 
@@ -9,7 +10,7 @@ export default function useScrollDirection(
   const prevScrollY = useRef(0)
 
   useEffect(() => {
-    const handleScroll = () => {
+    const handleScroll = throttle(() => {
       const currentScrollY = window.scrollY
 
       if (currentScrollY > prevScrollY.current) {
@@ -19,7 +20,7 @@ export default function useScrollDirection(
       }
 
       prevScrollY.current = currentScrollY
-    }
+    }, 200)
 
     window.addEventListener('scroll', handleScroll)
     return () => window.removeEventListener('scroll', handleScroll)

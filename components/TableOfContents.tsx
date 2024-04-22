@@ -27,15 +27,21 @@ const TableOfContents = ({ toc }: TableOfContentsProps) => {
   const firstLevel = toc.reduce((acc, cur) => (cur.depth < acc ? cur.depth : acc), 5)
 
   useEffect(() => {
-    const observer = createIntersectionObserver((entry) => {
-      const index = findIndexOfHeading(toc, `#${entry.target.id}`)
+    const observer = createIntersectionObserver(
+      (entry) => {
+        const index = findIndexOfHeading(toc, `#${entry.target.id}`)
 
-      if (entry.isIntersecting) {
-        setActiveId(index)
-      } else if (scrollDirection.current === 'up') {
-        setActiveId(index - 1)
+        if (entry.isIntersecting) {
+          setActiveId(index)
+        } else if (scrollDirection.current === 'up') {
+          setActiveId(index - 1)
+        }
+      },
+      {
+        threshold: 0.5,
+        rootMargin: '0px 0px -70% 0px',
       }
-    })
+    )
 
     const headingElements = toc.map((item) =>
       document.getElementById(item.url.slice(1, item.url.length))
