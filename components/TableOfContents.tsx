@@ -2,8 +2,10 @@
 
 import clsx from 'clsx'
 import Link from 'next/link'
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import '@/css/scrollbar.css'
+import useScrollDirection from '@/hooks/useScrollDirection'
+import createIntersectionObserver from '@/utils/createIntersectionObserver'
 
 interface TableOfContentsProps {
   toc: Array<{
@@ -13,54 +15,26 @@ interface TableOfContentsProps {
   }>
 }
 
-const createIntersectionObserver = ({
-  onEnter,
-  onExit,
-}: {
-  onEnter?: (entry: IntersectionObserverEntry) => void
-  onExit?: (entry: IntersectionObserverEntry) => void
-}) => {
-  return new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          onEnter?.(entry)
-        } else {
-          onExit?.(entry)
-        }
-      })
-    },
-    {
-      threshold: 0,
-    }
-  )
-}
-
-const findHeadingIndex = (toc: TableOfContentsProps['toc'], url: string) => {
+const findIndexOfHeading = (toc: TableOfContentsProps['toc'], url: string) => {
   return toc.findIndex((item) => item.url === url)
 }
 
 const TableOfContents = ({ toc }: TableOfContentsProps) => {
   const [activeId, setActiveId] = useState(0)
-  const scrollDirection = useRef<'up' | 'down'>('down')
-  const prevScrollY = useRef(0)
+  const scrollDirection = useScrollDirection('down')
 
   const paddings = ['ps-4', 'ps-8', 'ps-12', 'ps-16', 'ps-20', 'ps-24']
   const firstLevel = toc.reduce((acc, cur) => (cur.depth < acc ? cur.depth : acc), 5)
 
   useEffect(() => {
-    const observer = createIntersectionObserver({
-      onEnter: (entry) => {
-        if (scrollDirection.current === 'down') {
-          setActiveId(findHeadingIndex(toc, `#${entry.target.id}`))
-        }
-      },
-      onExit: (entry) => {
-        if (scrollDirection.current === 'up') {
-          const prevIndex = findHeadingIndex(toc, `#${entry.target.id}`) - 1
-          setActiveId(prevIndex > 0 ? prevIndex : 0)
-        }
-      },
+    const observer = createIntersectionObserver((entry) => {
+      const index = findIndexOfHeading(toc, `#${entry.target.id}`)
+
+      if (entry.isIntersecting) {
+        setActiveId(index)
+      } else if (scrollDirection.current === 'up') {
+        setActiveId(index - 1)
+      }
     })
 
     const headingElements = toc.map((item) =>
@@ -75,23 +49,6 @@ const TableOfContents = ({ toc }: TableOfContentsProps) => {
 
     return () => observer.disconnect()
   }, [toc])
-
-  useEffect(() => {
-    const handleScroll = () => {
-      const currentScrollY = window.scrollY
-
-      if (currentScrollY > prevScrollY.current) {
-        scrollDirection.current = 'down'
-      } else {
-        scrollDirection.current = 'up'
-      }
-
-      prevScrollY.current = currentScrollY
-    }
-
-    window.addEventListener('scroll', handleScroll)
-    return () => window.removeEventListener('scroll', handleScroll)
-  }, [])
 
   return (
     <ul className="scrollbar sticky top-0 hidden max-h-[100svh] overflow-y-auto overflow-x-clip py-8 pe-8 text-sm xl:block">
