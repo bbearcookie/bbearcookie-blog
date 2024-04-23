@@ -26,6 +26,7 @@ export default function Page({ params }: { params: { page: string } }) {
   return (
     <ListLayout
       posts={posts}
+      totalPostCount={posts.length}
       initialDisplayPosts={initialDisplayPosts}
       pagination={pagination}
       title="All Posts"
