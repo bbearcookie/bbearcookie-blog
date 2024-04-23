@@ -25,7 +25,7 @@ interface ListLayoutProps {
 
 function Pagination({ totalPages, currentPage }: PaginationProps) {
   const pathname = usePathname()
-  const basePath = pathname.split('/')[1]
+  const basePath = pathname.split('/')[1] || 'blog'
   const prevPage = currentPage - 1 > 0
   const nextPage = currentPage + 1 <= totalPages
 
@@ -139,7 +139,7 @@ export default function ListLayoutWithTags({
               <h3 className="font-bold uppercase text-gray-700 dark:text-gray-300">Tag List</h3>
               <ul>
                 <li className="my-3">
-                  {pathname === '/' ? (
+                  {pathname === '/' || pathname.startsWith('/blog') ? (
                     <h3 className="inline px-3 py-2 text-sm font-bold uppercase text-primary-500">
                       all ({totalPostCount})
                     </h3>

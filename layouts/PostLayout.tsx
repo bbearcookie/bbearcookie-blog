@@ -49,15 +49,6 @@ export default function PostLayout({ content, seriesContents, next, prev, childr
       <article>
         <div className="xl:divide-y xl:divide-gray-200 xl:dark:divide-gray-700">
           <header className="xl:pb-6">
-            <div className="pb-4 text-center sm:text-start xl:pb-8">
-              <Link
-                href={'/'}
-                className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400"
-                aria-label="Back to the blog"
-              >
-                &larr; Back to the blog
-              </Link>
-            </div>
             <div className="space-y-1 text-center">
               <dl className="space-y-10">
                 <div>
