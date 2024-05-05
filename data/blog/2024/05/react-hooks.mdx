@@ -1,0 +1,684 @@
+---
+title: React의 Hook 살펴보기
+date: '2024-05-05'
+lastmod: '2024-05-05'
+tags: ['react', 'fiber', 'hook']
+draft: false
+summary: 'React의 Hook의 구현 내용을 살펴보는 방법을 알아봤습니다.'
+---
+
+## 서론
+
+JS에서 함수는 생성자 함수로 사용하지 않는 이상 상태를 가질 수 없었기에, 리액트로 개발하면서 상태를 가진 컴포넌트를 구현하기 위해서는 클래스 컴포넌트를 사용해야만 했었습니다.
+
+그런데 리액트 v16.8 버전에서 Hook이 등장하면서 드디어 함수 컴포넌트도 상태를 가질 수 있게 되었는데, 어떻게 함수에서 이렇게 마법과 같은 일이 일어날 수 있는지 `useState` 의 동작 원리가 궁금했었습니다.
+
+어렴풋이 클로저를 통해서 상태를 보관하고 있다고 하는데, 이번에 궁금점을 해결하기 위해서 리액트 톺아보기 시리즈와 모던 리액트 딥다이브 스터디를 통해 리액트의 내부 코드를 파악하는 방법에 대해서 알게 되었고 나름대로 이해했던 내용을 기록해보고자 합니다.
+
+이번 포스트를 작성하면서 해결하고자 하는 궁금점은 크게 두 가지입니다.
+
+> 1. Hook의 구현 부분을 살펴보려면 어느 부분을 찾아야 할까?
+> 2. 반드시 Hook을 리액트 컴포넌트나 커스텀 훅의 최상단에 선언해야만 하는 이유가 무엇일까?
+
+리액트 v18.2 를 기준으로 작성되었습니다.
+
+## Fiber
+
+Hook이 구현되어 있는 코드를 이해하기 위해서는, 먼저 Fiber 노드에 대한 이해가 필요했습니다.
+
+왜냐하면 컴포넌트 안에서 사용되는 Hook은 결국 컴포넌트를 표현하는 Fiber 노드에 보관되기 때문입니다.
+
+Fiber 노드는 **리액트가 컴포넌트에 대한 정보를 관리하는 자바스크립트 객체**로, 컴포넌트의 상태, 프로퍼티, 다른 Fiber 노드와의 연결 정보등의 정보를 가지고 있습니다. 리액트가 이러한 Fiber 노드를 관리하면서 재조정 과정에서 불필요한 DOM 업데이트를 생략하고, 실제 DOM에 Commit해야 할 작업을 결정하게 됩니다.
+
+기존에는 Stack 아키텍처를 사용하고 있었기에 Run-to-Completion 방식으로 동작하여 Render 과정을 중간에 멈출 수 없다는 문제점이 있었지만, 16 버전부터는 Fiber 아키텍처를 사용하면서 **우선순위가 낮은 작업을 유예하거나 기존의 작업을 중단하는 것**이 가능해졌다고 합니다.
+
+![Hook이 Fiber에서 보관되는 전체적인 그림](/static/images/2024/05/react-hooks/fiber.png)
+
+먼저 제가 이해한 내용을 바탕으로 Hook이 Fiber 노드에 보관되는 구조를 그려보았습니다.
+
+- **Fiber**: 특정 리액트 컴포넌트에 대한 정보를 나타내는 객체로, 컴포넌트에서 사용된 Hook에 대한 정보들을 가지고 있습니다. _(memoizedState 프로퍼티에 Hook 객체가 보관됩니다.)_
+- **Hook**: `useState`, `useEffect` 등 컴포넌트 내부에서 사용된 Hook에 대한 정보를 나타내는 객체입니다. 각 Hook은 연결 리스트를 통해 연결되어 있습니다.
+- **UpdateQueue**: 상태를 업데이트하는 Dispatch 함수와, 다음으로 실행해야 할 `Update` 객체를 가리키고 있는 객체입니다. _(pending 프로퍼티는 가장 최근에 호출했던 Dispatch 함수에 대한 Update를 가리킵니다.)_
+- **Update**: 상태 업데이트에 대한 정보를 담고 있는 객체로, 한 번의 스케줄링 단위에 실행해야 하는 `setState` 의 호출 횟수만큼 생성됩니다. 또한 원형 연결 리스트로 연결되어 있습니다.
+
+이러한 부분은 [ReactInternalTypes.js](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactInternalTypes.js#L67) 파일에서 확인할 수 있습니다.
+
+```ts
+export type Fiber = {|
+  tag: WorkTag,
+
+  // Unique identifier of this child.
+  key: null | string,
+
+  // The value of element.type which is used to preserve the identity during
+  // reconciliation of this child.
+  elementType: any,
+
+  // The resolved function/class/ associated with this fiber.
+  type: any,
+
+  // The local state associated with this fiber.
+  stateNode: any,
+
+  return: Fiber | null,
+
+  // Singly Linked List Tree Structure.
+  child: Fiber | null,
+  sibling: Fiber | null,
+  index: number,
+
+  // The ref last used to attach this node.
+  // I'll avoid adding an owner field for prod and model that as functions.
+  ref:
+    | null
+    | (((handle: mixed) => void) & {_stringRef: ?string, ...})
+    | RefObject,
+
+  // Input is the data coming into process this fiber. Arguments. Props.
+  pendingProps: any, // This type will be more specific once we overload the tag.
+  memoizedProps: any, // The props used to create the output.
+
+  // A queue of state updates and callbacks.
+  updateQueue: mixed,
+
+  // The state used to create the output
+  memoizedState: any,
+
+  // Dependencies (contexts, events) for this fiber, if it has any
+  dependencies: Dependencies | null,
+
+  // Effect
+  flags: Flags,
+  subtreeFlags: Flags,
+  deletions: Array<Fiber> | null,
+
+  // Singly linked list fast path to the next fiber with side-effects.
+  nextEffect: Fiber | null,
+
+  // The first and last fiber with side-effect within this subtree. This allows
+  // us to reuse a slice of the linked list when we reuse the work done within
+  // this fiber.
+  firstEffect: Fiber | null,
+  lastEffect: Fiber | null,
+
+  // This is a pooled version of a Fiber. Every fiber that gets updated will
+  // eventually have a pair. There are cases when we can clean up pairs to save
+  // memory if we need to.
+  alternate: Fiber | null,
+|};
+
+export type Hook = {|
+  memoizedState: any,
+  baseState: any,
+  baseQueue: Update<any, any> | null,
+  queue: any,
+  next: Hook | null,
+|};
+
+export type UpdateQueue<S, A> = {|
+  pending: Update<S, A> | null,
+  lanes: Lanes,
+  dispatch: (A => mixed) | null,
+  lastRenderedReducer: ((S, A) => S) | null,
+  lastRenderedState: S | null,
+|};
+
+export type Update<S, A> = {|
+  lane: Lane,
+  action: A,
+  hasEagerState: boolean,
+  eagerState: S | null,
+  next: Update<S, A>,
+|};
+```
+
+## Hook의 구현 부분 살펴보기
+
+### 1. 인터페이스 찾기
+
+React에는 `react`, `react-dom`, `react-scheduler`, `react-reconciler` 등 다양한 패키지가 존재합니다.  
+자주 사용하는 `useState` 와 같은 훅은 `react` 패키지에서 가져오다보니, [packages/react/index.ts](https://github.com/facebook/react/blob/v18.2.0/packages/react/index.js#L83) 를 먼저 찾았고, 이어서 [packages/react/src/React.js](https://github.com/facebook/react/blob/v18.2.0/packages/react/src/React.js#L58) 에서는 [packages/react/src/ReactHooks.js](https://github.com/facebook/react/blob/v18.2.0/packages/react/src/ReactHooks.js#L83) 파일에서 훅의 인터페이스를 구현한 함수를 가져오고 있다는 점을 확인할 수 있습니다.
+
+그리고 인터페이스를 살펴보면, 훅의 실제 구현 내용이 이 패키지에 들어있는 것이 아니라, **외부에서 Dispatcher를 주입받고, 단순히 그 Dispatcher에 등록된 메소드만 호출**하고 있다는 점을 알 수 있습니다.
+
+```ts:react/src/ReactHooks.js showLineNumbers {3, 11}
+export function useState<S>(initialState: (() => S) | S): [S, Dispatch<BasicStateAction<S>>] {
+  const dispatcher = resolveDispatcher()
+  return dispatcher.useState(initialState)
+}
+
+export function useEffect(
+  create: () => (() => void) | void,
+  deps: Array<mixed> | void | null
+): void {
+  const dispatcher = resolveDispatcher()
+  return dispatcher.useEffect(create, deps)
+}
+```
+
+### 2. resolveDispatcher
+
+그래서 각 Hook의 메소드를 등록해 놓은 Dispatcher를 가져오는 `resolveDispatcher` 함수에 대해서 찾아봐야 하는데,
+
+[ReactHooks.js](https://github.com/facebook/react/blob/v18.2.0/packages/react/src/ReactHooks.js#L24) 파일을 살펴보면 `resolveDispatcher` 함수의 역할도 단순히 `ReactCurrentDispatcher` 객체의 `current` 프로퍼티를 가져올 뿐이라는 사실을 알 수 있습니다.
+
+```ts:react/src/ReactHooks.js showLineNumbers
+import ReactCurrentDispatcher from './ReactCurrentDispatcher'
+
+function resolveDispatcher() {
+  const dispatcher = ReactCurrentDispatcher.current;
+
+  return ((dispatcher: any): Dispatcher);
+}
+```
+
+또한 `ReactCurrentDispatcher` 를 파악해보고자 [ReactCurrentDispatcher.js](https://github.com/facebook/react/blob/v18.2.0/packages/react/src/ReactCurrentDispatcher.js) 파일을 확인해도 간단한 객체 정의만 확인할 수 있습니다.
+
+```ts:react/src/ReactCurrentDispatcher.js showLineNumbers
+import type { Dispatcher } from 'react-reconciler/src/ReactInternalTypes'
+
+const ReactCurrentDispatcher = {
+  /**
+   * @internal
+   * @type {ReactComponent}
+   */
+  current: (null: null | Dispatcher)
+}
+
+export default ReactCurrentDispatcher
+```
+
+### 3. Disptcher를 등록하는 위치 찾기
+
+그래서 `ReactCurrentDispatcher.current` 값이 언제 등록되는지의 위치를 찾아봐야 했습니다.
+
+이를 알아보기 위한 가장 단순한 방법으로, 프로퍼티에 대입 연산자로 값이 변경했던 부분을 찾아보았습니다.
+
+![Dispatcher를 등록하는 위치](/static/images/2024/05/react-hooks/react-current-dispatcher.png)
+
+그 결과 [renderWithHooks](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactFiberHooks.new.js#L374) 함수에서 Dispatcher를 등록하는 것을 확인할 수 있었고, 덕분에 사용자 입장에서는 `useState` 처럼 컴포넌트 내부에서 **동일한 훅을 사용했지만 컴포넌트가 마운트 되는 상황인지, 업데이트되는 상황인지에 따라 다른 함수가 사용**되는 것을 알 수 있었습니다.
+
+```ts:react-reconciler/src/ReactFiberHooks.new.js {9-12, 20-22, 28} showLineNumbers
+export function renderWithHooks<Props, SecondArg>(
+  current: Fiber | null,
+  workInProgress: Fiber,
+  Component: (p: Props, arg: SecondArg) => any,
+  props: Props,
+  secondArg: SecondArg,
+  nextRenderLanes: Lanes
+): any {
+  ReactCurrentDispatcher.current =
+    current === null || current.memoizedState === null
+      ? HooksDispatcherOnMount
+      : HooksDispatcherOnUpdate
+
+  let children = Component(props, secondArg)
+
+  if (didScheduleRenderPhaseUpdateDuringThisPass) {
+    let numberOfReRenders: number = 0
+    do {
+      // ... 생략
+      ReactCurrentDispatcher.current = __DEV__
+        ? HooksDispatcherOnRerenderInDEV
+        : HooksDispatcherOnRerender
+
+      children = Component(props, secondArg)
+    } while (didScheduleRenderPhaseUpdateDuringThisPass)
+  }
+
+  ReactCurrentDispatcher.current = ContextOnlyDispatcher
+}
+```
+
+그리고 상황 별로 실행해야 할 훅을 담은 Dispatcher 객체는 [여기](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactFiberHooks.new.js#L2427)서 확인할 수 있었습니다.
+
+```ts:react-reconciler/src/ReactFiberHooks.new.js showLineNumbers
+const HooksDispatcherOnMount: Dispatcher = {
+  useEffect: mountEffect,
+  useState: mountState,
+  // ... 생략
+}
+
+const HooksDispatcherOnUpdate: Dispatcher = {
+  useEffect: updateEffect,
+  useState: updateState,
+  // ... 생략
+}
+
+const HooksDispatcherOnRerender: Dispatcher = {
+  useEffect: updateEffect,
+  useState: rerenderState,
+  // ... 생략
+}
+
+export const ContextOnlyDispatcher: Dispatcher = {
+  useEffect: throwInvalidHookError,
+  useState: throwInvalidHookError,
+  // ... 생략
+}
+```
+
+즉, `useState` 와 같은 훅을 사용하면, `ReactCurrentDispatcher.current` 에서 상황에 따라 다른 Dispatcher 객체를 할당받아서 해당 Dispatcher 객체에 등록된 메소드를 호출하게 됩니다.
+
+예를 들어 `renderWithHooks` 함수에서 현재 렌더링하려는 컴포넌트의 파이버 노드를 나타내는 `current` 가 존재하지 않았다면 마운트 단계이니 `mountState` 함수가 호출되고, `current.memoizedState` 가 존재한다면 업데이트 단계이니 `updateState` 함수가 호출되는 것입니다.
+
+## 상태 선언
+
+이제 컴포넌트 내부에서 `useState` 를 호출할 때의 동작을 살펴보았습니다.  
+먼저 컴포넌트가 마운트될 때에는 `mountState` 함수가 호출될 것이기에 이 함수를 살펴보았습니다.  
+그런데 `mountState` 함수 내부에서는 `mountWorkInProgressHook` 함수를 통해서 Hook 객체를 생성하고 있기에, 먼저 `mountWorkInProgressHook` 함수를 살펴보았습니다.
+
+### mountWorkInProgressHook
+
+[mountWorkInProgressHook](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactFiberHooks.new.js#L636) 함수는 새로운 Hook 객체를 생성하고, 이전에 생성된 Hook 객체가 존재한다면 연결 리스트의 끝에 추가하는 함수입니다. 리액트 컴포넌트나 커스텀 훅 안에서 사용된 훅 객체는 Fiber 노드 내부에 `memoizedState` 에 들어가게 됩니다.
+
+`memoizedState` 에는 가장 처음으로 선언했던 Hook 객체만 들어가기에, 다음으로 사용했던 훅의 상태도 참조할 수 있도록 `next` 프로퍼티로 훅 객체 간의 연결 관계를 맺어주는 것입니다.
+
+이 함수의 역할을 정리하자면 단순합니다.
+
+- **2줄**: 새로운 Hook 객체를 생성합니다.
+- **14줄**: 만약 컴포넌트 내부에서 처음으로 선언된 훅이라면, 파이버 노드의 `memoizedState` 에 Hook 객체를 할당합니다.
+- **17줄**: 그렇지 않다면, 연결 리스트의 끝에 추가합니다.
+
+> 💡 **의문점**  
+> 컴포넌트 안에서 사용했던 훅을 보관하는 데 배열이 아닌 연결 리스트로 구현한 이유가 궁금해집니다. 특히 훅이 아직 정식 버전으로 들어오기 전에 올라왔던 포스팅인 [React hooks: not magic, just arrays
+> ](https://medium.com/@ryardley/react-hooks-not-magic-just-arrays-cd4f1857236e) 에서는 훅이 배열로 구현되어 있다고 설명하고 있어서, 초창기에는 배열이었다가 이후에 연결 리스트로 구현 방식을 변경하게 된 것인지 궁금점이 생겼습니다.
+
+```ts:react-reconciler/src/ReactFiberHooks.new.js {2, 14, 17} showLineNumbers
+function mountWorkInProgressHook(): Hook {
+  const hook: Hook = {
+    memoizedState: null,
+
+    baseState: null,
+    baseQueue: null,
+    queue: null,
+
+    next: null,
+  };
+
+  if (workInProgressHook === null) {
+    // This is the first hook in the list
+    currentlyRenderingFiber.memoizedState = workInProgressHook = hook;
+  } else {
+    // Append to the end of the list
+    workInProgressHook = workInProgressHook.next = hook;
+  }
+  return workInProgressHook;
+}
+```
+
+### mountState
+
+[mountState](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactFiberHooks.new.js#L1505) 는 컴포넌트가 처음 마운트 되는 단계에서 컴포넌트 내부에서 `useState` 훅의 선언이 있을 때 호출되는 함수입니다.
+
+- **4줄**: 새로운 Hook 객체를 생성합니다.
+- **9줄**: Hook 객체의 `memoizedState` 에 개발자가 초기값으로 전달한 상태를 할당합니다.
+- **20줄**: 상태를 업데이트하는 `dispatchSetState` 함수에 고정된 파라미터를 전달하여 `dispatch` 함수를 생성합니다. 이 `dispatch` 함수는 개발자가 사용하는 `setState` 함수로, 호출 시 재조정 과정에 따라 리렌더링이 필요하다면 스케줄러에게 작업을 요청합니다.
+- **25줄**: 개발자가 `useState` 함수를 호출했을 때 반환 값으로 받는 배열을 반환합니다.
+
+```ts:react-reconciler/src/ReactFiberHooks.new.js {4, 9, 10, 20, 25} showLineNumbers
+function mountState<S>(
+  initialState: (() => S) | S,
+): [S, Dispatch<BasicStateAction<S>>] {
+  const hook = mountWorkInProgressHook();
+  if (typeof initialState === 'function') {
+    // $FlowFixMe: Flow doesn't like mixed types
+    initialState = initialState();
+  }
+  hook.memoizedState = hook.baseState = initialState;
+  const queue: UpdateQueue<S, BasicStateAction<S>> = {
+    pending: null,
+    lanes: NoLanes,
+    dispatch: null,
+    lastRenderedReducer: basicStateReducer,
+    lastRenderedState: (initialState: any),
+  };
+  hook.queue = queue;
+  const dispatch: Dispatch<
+    BasicStateAction<S>,
+  > = (queue.dispatch = (dispatchSetState.bind(
+    null,
+    currentlyRenderingFiber,
+    queue,
+  ): any));
+  return [hook.memoizedState, dispatch];
+}
+```
+
+### updateWorkInProgressHook
+
+이제 이어서 컴포넌트가 업데이트될 때 호출되는 `updateState` 함수를 살펴보기에 앞서 훅 객체를 업데이트하는 [updateWorkInProgressHook](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactFiberHooks.new.js#L657) 함수를 살펴보았습니다.
+
+> 💡 **전제 사항**  
+> React는 새롭게 렌더링하려고 하는 작업물을 임시의 `workInProgress` 라는 곳에서 처리하다가, 작업이 완료되면 `current` 에 반영하는 방식으로 동작하는 더블 버퍼링 방식을 사용합니다. 왜냐하면 새로운 작업을 처리하다가도 우선순위가 더 높은 작업이 있다면 기존의 작업을 중단하는 것에 용이하기 때문입니다.
+
+> 그래서 리액트 소스코드 내부에서 전반적으로 사용되는 프로퍼티의 의미를 염두하고 있다면, 코드를 이해하기에 더 수월할 것입니다.  
+> **current**: 이미 기존에 렌더링되어 있는 Fiber 노드 or Hook 객체 등을 의미합니다.  
+> **workInProgress**: 현재 새롭게 렌더링하려고 하는 Fiber 노드 or Hook 객체 등을 의미합니다.  
+> **alternate**: current 기준으로는 workInProgress, workInProgress 기준으로는 current를 가리키는 포인터입니다.
+
+```ts:react-reconciler/src/ReactFiberHooks.new.js {7, 10, 12, 18, 24, 27, 35, 43, 57, 60} showLineNumbers
+function updateWorkInProgressHook(): Hook {
+  // This function is used both for updates and for re-renders triggered by a
+  // render phase update. It assumes there is either a current hook we can
+  // clone, or a work-in-progress hook from a previous render pass that we can
+  // use as a base. When we reach the end of the base list, we must switch to
+  // the dispatcher used for mounts.
+  let nextCurrentHook: null | Hook
+  if (currentHook === null) {
+    // 첫 번째 훅을 처리할 때
+    const current = currentlyRenderingFiber.alternate
+    if (current !== null) {
+      nextCurrentHook = current.memoizedState
+    } else {
+      nextCurrentHook = null
+    }
+  } else {
+    // 두 번째 이상의 훅을 처리할 때
+    nextCurrentHook = currentHook.next
+  }
+
+  let nextWorkInProgressHook: null | Hook
+  if (workInProgressHook === null) {
+    // 첫 번째 훅을 처리할 때
+    nextWorkInProgressHook = currentlyRenderingFiber.memoizedState
+  } else {
+    // 두 번째 이상의 훅을 처리할 때
+    nextWorkInProgressHook = workInProgressHook.next
+  }
+
+  if (nextWorkInProgressHook !== null) {
+    // 다음으로 작업해야 할 nextWorkInProgressHook 훅이 존재한다면, 새로운 훅을 만들지 않고 그 훅을 재사용
+    workInProgressHook = nextWorkInProgressHook
+    nextWorkInProgressHook = workInProgressHook.next
+
+    currentHook = nextCurrentHook
+  } else {
+    // 다음으로 작업해야 할 nextWorkInProgressHook 훅이 존재하지 않는다면, 새로운 훅을 만들어서 연결 리스트의 끝에 추가
+
+    if (nextCurrentHook === null) {
+      throw new Error('Rendered more hooks than during the previous render.')
+    }
+
+    currentHook = nextCurrentHook
+
+    const newHook: Hook = {
+      memoizedState: currentHook.memoizedState,
+
+      baseState: currentHook.baseState,
+      baseQueue: currentHook.baseQueue,
+      queue: currentHook.queue,
+
+      next: null,
+    }
+
+    if (workInProgressHook === null) {
+      // This is the first hook in the list.
+      currentlyRenderingFiber.memoizedState = workInProgressHook = newHook
+    } else {
+      // Append to the end of the list.
+      workInProgressHook = workInProgressHook.next = newHook
+    }
+  }
+  return workInProgressHook
+}
+```
+
+#### nextCurrentHook
+
+현재 처리하고 있는 컴포넌트의 `current` 파이버 노드에 들어있는 훅 객체를 참조하는 식별자입니다.
+
+- **7줄**: 후행하는 로직에 따라 current 파이버 노드의 훅 객체가 `nextCurrentHook` 프로퍼티에 할당됩니다.
+- **10줄**: `currentlyRenderingFiber` 는 현재 처리하고 있는 컴포넌트의 파이버 노드인 `workInProgress` 파이버 노드를 가리키고 있는데, 이것의 `alternate` 는 이미 렌더링되었던 `current` 파이버 노드를 가리키고 있습니다. 즉, 이전에 이미 렌더링되어 있는 `current` 파이버 노드의 훅 객체를 참조합니다.
+- **18줄**: `updateWorkInProgressHook` 함수가 종료되기 전에 이미 처리했었던 훅 객체를 `currentHook` 전역 프로퍼티에 할당하는데, 덕분에 두 번째 이상으로 선언된 훅을 처리할 때에는 복잡한 비교 로직 없이 바로 `next` 프로퍼티를 참조하여 다음 훅 객체를 처리할 수 있습니다.
+
+#### nextWorkInProgressHook
+
+현재 처리하고 있는 컴포넌트의 `workInProgress` 파이버 노드에 들어있는 훅 객체를 참조하는 식별자입니다.
+
+- **21줄**: 후행하는 로직에 따라 workInProgress 파이버 노드의 훅 객체가 `nextWorkInProgressHook` 프로퍼티에 할당됩니다.
+- **24줄**: 첫 번째로 선언된 훅을 처리할 때에는 `workInProgress` 파이버 노드의 훅 객체를 참조합니다.
+- **27줄**: 두 번째 이상의 훅을 처리할 때에는 이미 처리했던 훅 객체인 `workInProgressHook` 의 `next` 포인터를 활용하여 다음 훅 객체를 참조합니다.
+
+#### currentHook
+
+이전에 `updateWorkInProgressHook` 가 종료되었을 때의 `nextCurrentHook` 값을 참조하는 식별자입니다. 다음으로 이어서 처리해야 할 훅 객체를 작업하면서 `updateWorkInProgressHook` 가 또 호출되었을 경우를 대비하여 이전 훅 정보를 보관하고 있는 것입니다.
+
+- **35줄, 43줄**: 다음으로 처리해야 할 훅 객체를 처리할 때 이전 훅 정보를 사용할 수 있도록 하기 위해서 `updateWorkInProgressHook` 함수가 종료되기 전에 이미 처리했던 `nextCurrentHook` 훅 객체를 `currentHook` 전역 프로퍼티에 할당합니다.
+
+#### workInProgressHook
+
+마찬가지로 이전에 `updateWorkInProgressHook` 가 종료되었을 때의 `nextWorkInProgressHook` 값을 참조하는 식별자입니다.
+
+- **57줄, 60줄**: 마찬가지로 다음으로 처리해야 할 훅 객체를 위해서 이미 처리했던 `nextWorkInProgressHook` 객체를 `workInProgressHook` 전역 프로퍼티에 할당합니다. 또한 훅 객체를 연결합니다.
+
+### updateState
+
+[updateState](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactFiberHooks.new.js#L1532) 는 컴포넌트가 업데이트되는 단계에 컴포넌트 내부에서 `useState` 훅의 선언이 있을 때 호출되는 함수입니다.
+
+또한 코드를 살펴보면 실제 로직은 `updateReducer` 에 위임하고 있다는 점을 알 수 있습니다.
+
+```ts:react-reconciler/src/ReactFiberHooks.new.js {9} showLineNumbers
+function basicStateReducer<S>(state: S, action: BasicStateAction<S>): S {
+  // $FlowFixMe: Flow doesn't like mixed types
+  return typeof action === 'function' ? action(state) : action;
+}
+
+function updateState<S>(
+  initialState: (() => S) | S,
+): [S, Dispatch<BasicStateAction<S>>] {
+  return updateReducer(basicStateReducer, (initialState: any));
+}
+```
+
+### updateReducer
+
+[updateReducer](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactFiberHooks.new.js#L759) 는 컴포넌트가 업데이트되는 단계에 `useState` 나 `useReducer` 훅의 선언이 있을 때 호출되는 함수입니다.
+
+Render 단계에서 `useState` 의 반환 값 중 두 번째로 넘어오는 setter 함수인 `dispatchSetState` 를 호출하게 되면 상태의 업데이트를 즉시 처리하는 것이 아니라 Queue에 넣어두고 있는데, 이 Queue에 들어있는 업데이트를 처리하는 과정이 `updateReducer` 에 포함되어 있기도 합니다.
+
+Lane이나 Concurrent Rendering과 관련된 내용은 아직 이해가 부족하여 생략하였습니다.
+
+- **18-30줄**: 상태를 변경하는 `dispatchSetState` 가 Render 단계에서 동작한다면, 상태를 업데이트해야 하는 작업이 Queue에 들어있고 가장 최근에 등록된 Update를 `pending` 프로퍼티로 가리키고 있게 됩니다. 그런데 `Hook` 객체에 들어있는 `baseQueue` 에는 아직 들어가지 않은 업데이트가 존재할 수 있기에 이를 통합해주는 작업을 수행합니다.
+- **54-62줄**: 상태를 변경하는 `dispatchSetState` 가 Render 단계가 아닐 때 수행되었다면, 리듀서 함수가 미리 실행되어서 만들어 진 값이 `eagerState` 프로퍼티에 존재하게 됩니다. 그래서 계산이 이미 수행되었는지를 체크하고 재활용하거나 리듀서 함수를 호출해서 새로운 값을 계산하는 로직을 수행합니다.
+- **74줄**: 훅에 이미 들어있는 상태 값과 새로 계산된 상태 값이 다르다면, 리액트에게 이 훅이 업데이트되었음을 알려주는 작업을 수행합니다. ([markWorkInProgressReceivedUpdate](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactFiberBeginWork.new.js#L3328) 함수는 `didReceiveUpdate` 플래그 변수를 true로 만들어 주는 단순한 작업을 수행하는데, 재조정 과정에서 이 플래그 변수를 확인하여 리렌더링이 필요한지를 판단하는 것으로 추측하고 있습니다. 이 부분은 추후에 더 자세히 살펴볼 필요성을 느낍니다.)
+
+```ts:react-reconciler/src/ReactFiberHooks.new.js {18-30, 54-62, 74} showLineNumbers
+function updateReducer<S, I, A>(
+  reducer: (S, A) => S,
+  initialArg: I,
+  init?: I => S,
+): [S, Dispatch<A>] {
+  const hook = updateWorkInProgressHook();
+  const queue = hook.queue;
+
+  queue.lastRenderedReducer = reducer;
+
+  const current: Hook = (currentHook: any);
+
+  // The last rebase update that is NOT part of the base state.
+  let baseQueue = current.baseQueue;
+
+  // The last pending update that hasn't been processed yet.
+  const pendingQueue = queue.pending;
+  if (pendingQueue !== null) {
+    // We have new updates that haven't been processed yet.
+    // We'll add them to the base queue.
+    if (baseQueue !== null) {
+      // Merge the pending queue and the base queue.
+      const baseFirst = baseQueue.next;
+      const pendingFirst = pendingQueue.next;
+      baseQueue.next = pendingFirst;
+      pendingQueue.next = baseFirst;
+    }
+    current.baseQueue = baseQueue = pendingQueue;
+    queue.pending = null;
+  }
+
+  if (baseQueue !== null) {
+    // We have a queue to process.
+    const first = baseQueue.next;
+    let newState = current.baseState;
+
+    let newBaseState = null;
+    let newBaseQueueFirst = null;
+    let newBaseQueueLast = null;
+    let update = first;
+    do {
+      if (newBaseQueueLast !== null) {
+        const clone: Update<S, A> = {
+          lane: NoLane,
+          action: update.action,
+          hasEagerState: update.hasEagerState,
+          eagerState: update.eagerState,
+          next: (null: any),
+        };
+        newBaseQueueLast = newBaseQueueLast.next = clone;
+      }
+
+      // Process this update.
+      if (update.hasEagerState) {
+        // If this update is a state update (not a reducer) and was processed eagerly,
+        // we can use the eagerly computed state
+        newState = ((update.eagerState: any): S);
+      } else {
+        const action = update.action;
+        newState = reducer(newState, action);
+      }
+    update = update.next;
+    } while (update !== null && update !== first);
+
+    if (newBaseQueueLast === null) {
+      newBaseState = newState;
+    } else {
+      newBaseQueueLast.next = (newBaseQueueFirst: any);
+    }
+
+    // Mark that the fiber performed work, but only if the new state is
+    // different from the current state.
+    if (!is(newState, hook.memoizedState)) {
+      markWorkInProgressReceivedUpdate();
+    }
+
+    hook.memoizedState = newState;
+    hook.baseState = newBaseState;
+    hook.baseQueue = newBaseQueueLast;
+
+    queue.lastRenderedState = newState;
+  }
+
+  const dispatch: Dispatch<A> = (queue.dispatch: any);
+  return [hook.memoizedState, dispatch];
+}
+```
+
+## 상태 업데이트
+
+### dispatchSetState
+
+[dispatchSetState](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactFiberHooks.new.js#L2228) 는 `useState` 로 선언한 상태를 업데이트하는 setter 함수입니다.  
+이러한 사실은 `mountState` 와 `updateReducer` 함수의 반환 값을 확인하면 알 수 있습니다.
+
+이 부분도 Lane이나 Concurrent Rendering과 관련된 내용은 아직 이해가 부족하여 상태 업데이트에 대한 내용만 살펴보았습니다.
+
+- **8줄**: 상태를 업데이트 할 동작을 나타내는 `Update` 객체를 생성합니다.
+- **17줄**: 현재 Render 단계를 진행중이라면, 상태를 즉시 업데이트하는 것이 아니라 큐에 넣어두는 작업을 하는 것으로 보입니다. [enqueueRenderPhaseUpdate](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactFiberHooks.new.js#L2318) 함수의 내용을 살펴보면 Update 객체를 원형 연결 리스트의 형태로 만들고 있음을 확인할 수 있습니다.
+- **29줄**: `lastRenderedReducer` 에는 개발자가 `useState`, `useReducer` 를 사용하면서 전달한 `reducer` 가 할당되어 있다는 점을 [updateReducer](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactFiberHooks.new.js#L773) 에서 확인할 수 있습니다.  
+  그래서 이 reducer 함수를 실행하여 새로운 결과 값을 만들어 냅니다.
+- **33줄**: 만약 새롭게 만들어 낸 결과 값이 기존의 상태 값과 동일하다면, 업데이트를 해야 할 필요가 없습니다. 따라서 `enqueueConcurrentHookUpdateAndEagerlyBailout` 함수를 호출한 뒤 빠르게 종료합니다.
+- **46줄**: 스케줄러에게 현재 `fiber` 노드의 업데이트를 요청하여 리렌더링이 발생할 수 있도록 합니다.
+
+```ts:react-reconciler/src/ReactFiberHooks.new.js {8, 17, 29, 33, 46} showLineNumbers
+function dispatchSetState<S, A>(
+  fiber: Fiber,
+  queue: UpdateQueue<S, A>,
+  action: A,
+) {
+  const lane = requestUpdateLane(fiber);
+
+  const update: Update<S, A> = {
+    lane,
+    action,
+    hasEagerState: false,
+    eagerState: null,
+    next: (null: any),
+  };
+
+  if (isRenderPhaseUpdate(fiber)) {
+    enqueueRenderPhaseUpdate(queue, update);
+  } else {
+    const alternate = fiber.alternate;
+    if (
+      fiber.lanes === NoLanes &&
+      (alternate === null || alternate.lanes === NoLanes)
+    ) {
+      const lastRenderedReducer = queue.lastRenderedReducer;
+      if (lastRenderedReducer !== null) {
+        let prevDispatcher;
+        try {
+          const currentState: S = (queue.lastRenderedState: any);
+          const eagerState = lastRenderedReducer(currentState, action);
+
+          update.hasEagerState = true;
+          update.eagerState = eagerState;
+          if (is(eagerState, currentState)) {
+            enqueueConcurrentHookUpdateAndEagerlyBailout(fiber, queue, update);
+            return;
+          }
+        } catch (error) {
+          // Suppress the error. It will throw again in the render phase.
+        }
+      }
+    }
+
+    const root = enqueueConcurrentHookUpdate(fiber, queue, update, lane);
+    if (root !== null) {
+      const eventTime = requestEventTime();
+      scheduleUpdateOnFiber(root, fiber, lane, eventTime);
+      entangleTransitionUpdate(root, queue, lane);
+    }
+  }
+
+  markUpdateInDevTools(fiber, lane, action);
+}
+```
+
+## 마무리
+
+내용을 정리하자면:
+
+1. 컴포넌트에서 사용된 Hook은 Fiber 노드의 `memoizedState` 에 저장된다.
+2. 컴포넌트에서 Hook의 선언부를 만나면, 어떤 상황이냐에 따라서 미리 등록된 Dispatcher 객체를 통해 다른 함수가 사용된다.
+   - 컴포넌트가 마운트되는 단계에서 `useState` 훅의 선언부를 만나면 `mountState` 함수가 호출된다.
+   - 컴포넌트가 업데이트되는 단계에서 `useState` 훅의 선언부를 만나면 `updateState` 함수가 호출된다.
+3. 각 Hook은 연결 리스트로 구현되어 있고, 컴포넌트가 업데이트될 때마다 이전에 처리한 Hook 객체의 `next` 연결 정보를 통해 다음 Hook 객체를 처리한다.
+
+실제 실행 결과를 확인해보면:
+
+```ts
+import { useState } from 'react';
+
+const MyComponent = () => {
+  const [a, setA] = useState('첫 번째 선언한 훅');
+  const [b, setB] = useState('두 번째 선언한 훅');
+  const [c, setC] = useState('세 번째 선언한 훅');
+
+  return <div>안녕하세요</div>;
+};
+
+export default MyComponent;
+```
+
+![MyComponent의 파이버 노드](/static/images/2024/05/react-hooks/component-result.png)
+
+React 소스코드를 살펴보면서 Hook이 어떻게 클로저로 구현되어 있는지, 왜 Hook을 최상단에서만 선언해야 하는지 등에 대한 의문점을 해소할 수 있었습니다.
+
+또한 TanStack Query에서도 `notifyManager` 를 통해서 업데이트 작업을 배칭 처리를 하고 있었는데, React에서도 나름대로의 스케줄러를 활용하고 있는 점을 보아 좋은 아키텍처를 이해하려고 노력하다보면 유사한 아이디어로 구현된 부분을 빠르게 파악할 수 있고 평소에 사용하고 있는 패키지의 동작 원리를 빠르게 파악하며 서비스에 적용하면서 발생하는 이슈를 해결하는 것에도 도움이 되겠다는 생각이 들었습니다.
+
+앞으로 `createRoot` 함수를 실행하는 순간부터 리렌더링이 발생할 때까지 리액트가 어떻게 동작하는지도 살펴보고 싶고, 스케줄러도 변경 작업을 전달받아서 어떻게 처리하는지에 대해서도 알아보고 싶지만 차근차근 공부해보려고 합니다. 잘못 이해한 정보가 있을 수도 있고, 리액트 소스코드에 대한 이해도를 높히면서 점차 수정하려고 합니다.
+
+## References
+
+모던 리액트 딥다이브  
+[React 톺아보기 - 03. Hooks_1](https://goidle.github.io/react/in-depth-react-hooks_1/)  
+[React 파이버 아키텍처 분석](https://d2.naver.com/helloworld/2690975)
