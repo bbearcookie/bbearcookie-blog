@@ -1,5 +1,7 @@
 {
   "react": 4,
+  "fiber": 1,
+  "hook": 1,
   "tanstack-query": 1,
   "react-query": 1,
   "react-native": 1,

@@ -4,7 +4,7 @@ const siteMetadata = {
   author: 'SangHoon Lee',
   headerTitle: 'bbearcookie',
   description: '개발 관련한 내용을 자유롭게 기록하는 블로그입니다.',
-  language: 'ko-KR',
+  language: 'ko',
   theme: 'system', // system, dark or light
   siteUrl: 'https://bbearcookie.vercel.app',
   siteRepo: 'https://github.com/bbearcookie/bbearcookie-blog',
