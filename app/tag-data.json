@@ -1,4 +1,7 @@
 {
+  "retrospect": 2,
+  "dnd": 1,
+  "oceanletter": 1,
   "react": 4,
   "fiber": 1,
   "hook": 1,
@@ -25,6 +28,5 @@
   "deployment": 5,
   "state": 1,
   "observer": 1,
-  "retrospect": 1,
   "devcourse": 1
 }
