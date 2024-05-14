@@ -18,6 +18,12 @@ const projectsData: Project[] = [
     imgSrc: '/static/images/moabam.png',
     href: 'https://github.com/team-moabam/moabam-FE',
   },
+  {
+    title: '머쓱;레터',
+    description: `평소에 고마움을 느꼈던 친구에게 부끄러워 전하지 못했던 편지를 전달하는 서비스`,
+    imgSrc: '/static/images/musseuk.png',
+    href: 'https://github.com/prgrms-fe-devcourse/FEDC4_MUSSEUK_LETTER_Donggeun',
+  },
 ]
 
 export default projectsData
