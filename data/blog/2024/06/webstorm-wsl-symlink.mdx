@@ -1,0 +1,83 @@
+---
+title: WebStorm에서 pnpm을 사용할 때 심볼릭 링크를 인식하지 못하는 문제 해결하기
+date: '2024-06-15'
+lastmod: '2024-06-15'
+tags: ['webstorm', 'wsl', 'pnpm', 'symlink', 'issue']
+draft: false
+summary: 'WebStorm에서 WSL을 사용할 때 심볼릭 링크를 인식하지 못하는 문제를 해결하는 방법을 기록합니다.'
+---
+
+## 서론
+
+저는 평소에 Host OS를 Windows 11로 사용하면서, 다양한 개발 환경은 WSL2을 사용하여 Ubuntu OS에 세팅하는 편입니다.
+
+이번에 JetBrains 계열의 IDE 중 하나인 WebStorm을 사용해보게 되었는데 **Windows 환경에서 동작하는 IDE와, Ubuntu 환경에서 동작하는 개발 환경의 통합**과 관련하여 마주했던 이슈를 기록해보고자 합니다.
+
+## 문제 발생: Lint 미적용
+
+![ESLint: Install the 'eslint' package](/static/images/2024/06/webstorm-wsl-symlink/eslint.png)
+
+WebStorm을 설치를 마치고 WSL2가 관리하는 디스크 영역에 존재하는 프로젝트를 Open하니, `ESLint: Install the 'eslint' package` 라는 오류 메시지가 발생하면서 **린트가 작동하지 않는 문제**가 발생했습니다.
+
+그런데 희안한 부분은 모든 Node.js 프로젝트마다 동일한 현상이 발생하는 것이 아니라, **일부 프로젝트에서만 간헐적으로 발생**하고 있었습니다.
+
+또한 문제가 생기는 프로젝트를 `VSCode` 로 열었을 때에는 린트가 잘 작동하고 있었습니다.
+
+## 문제 원인: 심볼릭 링크
+
+![JetBrains IDE를 WSL2와 함께 사용하면서 고통 받고 있다는 이슈](/static/images/2024/06/webstorm-wsl-symlink/symlink-issue.png)
+
+원인을 찾기 위해 다양한 삽질을 시도해 보았고, WSL GitHub 레포지토리에서 [심볼릭 링크와 관련한 이슈](https://github.com/microsoft/WSL/issues/5118)가 활발히 논의되었다는 부분을 확인할 수 있었습니다.
+
+문득 pnpm은 심볼릭 링크를 통해서 의존성을 관리하고 있다는 점이 생각났는데, 실제로 린트가 적용되지 않았던 프로젝트가 모두 공통적으로 `pnpm` 을 패키지 매니저로 사용하고 있는 상황이었습니다.
+
+여기서 힌트를 얻어 `.npmrc` 파일에 `node-linker=hoisted` 옵션을 넣고 다시 시도해보거나, 혹은 `npm` 이나 `yarn` 으로 패키지 설치를 시도해보았더니, 결과는 성공적으로 린트가 적용되었습니다.
+
+### 문제가 발생한 원인
+
+[Why Windows can't follow WSL symlinks](https://blog.trailofbits.com/2024/02/12/why-windows-cant-follow-wsl-symlinks/)에 따르면, Windows와 Linux의 심볼릭 링크 구현 방식이 다르기에 WIndows가 Linux의 심볼릭 링크를 해석할 수 없어서 발생하는 문제라고 합니다.
+
+Windows에서의 심볼릭 링크는 커널에 의해 실행되는 일종의 객체이지만, Linux에서의 심볼릭 링크는 단순히 원본 파일을 가리키는 특정 플래그가 존재하는 간단한 파일이기 때문입니다.
+
+또한 Windows는 NTFS 파일 시스템을 사용하고, Linux는 ext4를 파일 시스템으로 사용하니 이러한 호환에서 오는 차이도 있지 않을까 싶은 생각이 듭니다.
+
+### VSCode에서는 정상 작동했던 이유
+
+![WSL Extension](/static/images/2024/06/webstorm-wsl-symlink/wsl-extension.png)
+
+VSCode에서는 Windows에 설치된 IDE를 Linux 환경의 개발 환경을 통합하는 데 WSL 익스텐션으로 손쉽게 제공하고 있어서 별 다른 어려움 없이 사용할 수 있었던 것이었습니다. 실제로 VSCode를 처음 실행했을 때 WSL 환경을 감지하면 익스텐션을 추천해줬던 것으로 기억합니다.
+
+> 같은 MS에서 관리하는 것이라 그런지 [WSL 환경에서 VSCode를 사용하기 위한 메뉴얼](https://learn.microsoft.com/ko-kr/windows/wsl/tutorials/wsl-vscode)도 굉장히 잘 되어있습니다.
+
+## 해결 방법: JetBrains Gateway
+
+![JetBrains Gateway](/static/images/2024/06/webstorm-wsl-symlink/remote-development.png)
+
+JetBrains 계열의 IDE에서도 유사한 방식으로 WSL을 지원하지 않을까 싶었는데, [JetBrains Gateway](https://www.jetbrains.com/remote-development/gateway/)을 제공하고 있었습니다.
+
+JetBrains IDE가 설치된 OS가 아닌 외부 환경에 접근하는 데 있어서는 모두 `JetBrains Gateway` 을 활용할 수 있는 듯 합니다. (원격 서버 SSH, WSL, 컨테이너 환경 등)
+
+> WebStorm 자체적으로 탑재된 `Remote Development` 기능으로 `JetBrains Gateway` 을 제공하는 것으로 보입니다.
+
+![WSL2 Connect](/static/images/2024/06/webstorm-wsl-symlink/wsl-connect.png)
+
+사용할 WebStorm의 정확한 버전과, 열어보려고 하는 프로젝트의 디렉토리를 선택하면 됩니다.
+
+### 주의: WebStorm 버전을 정확히 맞추자
+
+JetBrains Gateway을 통해서 프로젝트를 열 때 IDE의 버전을 현재 실행한 IDE의 버전으로 반드시 맞춰야 합니다.
+그렇지 않으면 아래와 같은 오류와 함께 실행되지 않는 문제가 발생할 수 있습니다.
+
+![Error occurred during initialization of VM](/static/images/2024/06/webstorm-wsl-symlink/IDE-version.png)
+
+## 결론
+
+- Windows 환경에서는 Linux 가상 환경의 심볼릭 링크에 직접 접근할 수 없다.
+- JetBrains 계열의 IDE를 활용할 때 가상 환경의 프로젝트에 접근하고자 한다면, 가상 환경의 디렉토리를 바로 열기보다는 `Jetbrains Gateway` 를 활용해서 열도록 하자.
+
+## References
+
+[WSL2: Packages installed using pnpm not detected](https://youtrack.jetbrains.com/issue/WEB-49919/WSL2-Packages-installed-using-pnpm-not-detected)  
+[access Linux symlinks from \\wsl$](https://github.com/microsoft/WSL/issues/5118)  
+[Why Windows can't follow WSL symlinks](https://blog.trailofbits.com/2024/02/12/why-windows-cant-follow-wsl-symlinks/)  
+[하드링크와 심볼릭링크 (feat. 파일과 디렉토리의 차이)](https://youtu.be/Y0S_YPAUDX4?si=-5RUkylNvBipXZwd)
