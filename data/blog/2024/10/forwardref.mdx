@@ -1,0 +1,536 @@
+---
+title: 함수 컴포넌트가 ref를 prop으로 받을 수 없는 이유
+date: '2024-10-06'
+lastmod: '2024-10-06'
+tags: ['react', 'ref', 'forwardRef']
+draft: false
+summary: 'React 19 미만 버전까지 함수 컴포넌트가 왜 ref를 prop으로 받을 수 없었는지 구현 방식을 살펴봤습니다.'
+series: 동작 원리 살펴보기
+---
+
+## 서론
+
+일반적으로 `key`, `ref` 와 같은 속성은 리액트가 자체적으로 사용하는 예약된 프로퍼티 이름으로, 사용자가 정의한 커스텀 함수 컴포넌트는 이러한 속성을 prop으로 받을 수 없습니다.
+
+그래서 사용자가 정의한 컴포넌트에 `ref` 속성을 전달할 때 이를 가져와서 사용하고 싶은 경우에는 `forwardRef` 고차 함수를 사용해야 하는데요, 이번 글에서는 **왜 반드시 고차 함수를 통해서 `ref` 를 처리해야만 하는지 궁금했던 내용**을 살펴본 내용을 기록해보고자 합니다.
+
+(물론 React 19 버전부터는 [ref가 prop으로 변경될 예정](https://ko.react.dev/blog/2024/04/25/react-19#improvements-in-react-19)이며, `forwardRef` 는 deprecated 될 예정이라고 합니다.)
+
+## 예시
+
+### 예시 코드
+
+먼저 forwardRef를 사용한 경우와, 그렇지 않은 경우를 비교하기 위한 간단한 코드를 작성해보았습니다.
+
+```tsx {19, 26} showLineNumbers
+import { ComponentPropsWithRef, forwardRef, useRef } from 'react'
+
+const RefExample = () => {
+  const ref1 = useRef<HTMLDivElement>(null)
+  const ref2 = useRef<HTMLDivElement>(null)
+
+  return (
+    <div>
+      <h2>Child</h2>
+      <NonForwardedChild ref={ref1} key="non-forwarded" />
+      <h2>ForwardedChild</h2>
+      <ForwardedChild ref={ref2} key="forwarded" />
+    </div>
+  )
+}
+
+const NonForwardedChild = (props: ComponentPropsWithRef<'div'>) => {
+  const { key, ref } = props
+  console.log("NonForwardedChild's ref is", ref, 'and key is', key)
+  return <div ref={ref}>나는 Child입니다.</div>
+}
+
+const ForwardedChild = forwardRef<HTMLDivElement, ComponentPropsWithRef<'div'>>(
+  (props, forwardedRef) => {
+    const { key } = props
+    console.log("ForwardedChild's ref is", forwardedRef, 'and key is', key)
+    return <div ref={forwardedRef}>나는 ForwardRef로 감싸진 Child입니다.</div>
+  }
+)
+
+export default RefExample
+```
+
+### 실행 결과
+
+![실행 결과 콘솔](/static/images/2024/10/forwardref/console.png)
+
+실행 결과를 살펴보면, forwardRef로 감싸진 `ForwardedChild` 만 `ref`를 가져올 수 있다는 점을 확인할 수 있습니다.  
+또한 두 컴포넌트 모두 예약된 속성인 `key` 또한, prop으로 받을 수 없음을 확인할 수 있습니다.
+
+### 빌드 결과
+
+Non-forwarded와 Forwarded가 어떤 차이점이 있는지 알아보기 위해, 우선 빌드 결과부터 살펴봤습니다.  
+아래 코드는 사용자가 정의한 컴포넌트가 빌드된 결과물로, **`return` 구문에서 사용한 JSX 코드가 `jsx` 함수를 호출하는 형태로 변환**된 것을 확인할 수 있습니다.
+
+7줄과 11줄을 살펴보면, `NonForwardedChild` 와 `ForwardedChild` 컴포넌트에게 `ref` 를 전달하는 방식은 다르지 않다는 점을 알 수 있습니다.
+
+(후술하겠지만, [jsx](https://github.com/facebook/react/blob/v18.2.0/packages/react/src/jsx/ReactJSXElement.js#L210) 함수는 3개의 인자를 받습니다.)
+
+> - **1번째 인자(type)**: 컴포넌트를 식별할 타입
+> - **2번째 인자(config)**: 컴포넌트에 전달할 prop 객체
+> - **3번째 인자(maybeKey)**: 컴포넌트에 전달할 key 값
+
+```js {7, 11} showLineNumbers
+const RefExample = () => {
+  const ref1 = reactExports.useRef(null)
+  const ref2 = reactExports.useRef(null)
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs('div', {
+    children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx('h2', { children: 'Child' }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(NonForwardedChild, { ref: ref1 }, 'non-forwarded'),
+      /* @__PURE__ */ jsxRuntimeExports.jsx('h2', {
+        children: 'ForwardedChild',
+      }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(ForwardedChild, { ref: ref2 }, 'forwarded'),
+    ],
+  })
+}
+const NonForwardedChild = (props) => {
+  const { key, ref } = props
+  console.log("NonForwardedChild's ref is", ref, 'and key is', key)
+  return /* @__PURE__ */ jsxRuntimeExports.jsx('div', {
+    ref,
+    children: '나는 Child입니다.',
+  })
+}
+const ForwardedChild = reactExports.forwardRef((props, forwardedRef) => {
+  const { key } = props
+  console.log("ForwardedChild's ref is", forwardedRef, 'and key is', key)
+  return /* @__PURE__ */ jsxRuntimeExports.jsx('div', {
+    ref: forwardedRef,
+    children: '나는 ForwardRef로 감싸진 Child입니다.',
+  })
+})
+```
+
+## ReactElement 생성
+
+컴포넌트의 외부로부터 `ref` 를 주입받는 방식이 다르지 않다는 점을 보아, 빌드 시 `ref` 에 대한 전처리를 수행하는 것이 아니라 `forwardRef` 컴포넌트와 일반 컴포넌트가 런타임에서 수행하는 동작에 차이가 있어 보입니다.
+
+이를 알아보기 위해서 먼저 리액트 컴포넌트를 호출하는 `jsx` 함수의 구현을 살펴보았습니다.
+
+### jsx 함수
+
+JSX 문법을 통해 컴포넌트를 사용하면 호출되는 `jsx` 함수는 아래와 같이 구현되어 있습니다.
+
+```tsx {10, 14, 18, 22-23, 27} showLineNumbers
+export function jsx(type, config, maybeKey) {
+  let propName
+
+  const props = {}
+
+  let key = null
+  let ref = null
+
+  if (maybeKey !== undefined) {
+    key = '' + maybeKey
+  }
+
+  if (hasValidKey(config)) {
+    key = '' + config.key
+  }
+
+  if (hasValidRef(config)) {
+    ref = config.ref
+  }
+
+  for (propName in config) {
+    if (hasOwnProperty.call(config, propName) && !RESERVED_PROPS.hasOwnProperty(propName)) {
+      props[propName] = config[propName]
+    }
+  }
+
+  return ReactElement(type, key, ref, undefined, undefined, ReactCurrentOwner.current, props)
+}
+
+const RESERVED_PROPS = {
+  key: true,
+  ref: true,
+  __self: true,
+  __source: true,
+}
+```
+
+`jsx` 함수는 3개의 인자를 받아서 `ReactElement` 함수를 호출하는데 이 때 `type`, `key` 를 문자열로 변환하거나, 각종 props에 대한 정보가 담긴 `config` 에서 `ref` 를 꺼내는 작업을 수행하여 `ReactElement` 함수에 전달합니다.
+
+중요한 부분은 `config` 객체에 들어 있는 속성을 `props` 로 변환하는 22~23번째 줄의 코드입니다.
+
+미리 정의된 예약어인 `RESERVED_PROPS` 에 속하지 않는 속성들만 `props` 객체에 담고 있기에 `key`, `ref` 와 같은 예약어는 `props` 객체에 포함되지 않는 것입니다.
+
+컴포넌트를 사용하는 측에서 **`ref` 를 넘겨주더라도 `prop` 객체로부터 꺼내서 사용할 수 없는 이유**가 바로 이 부분에 있습니다.
+
+### ReactElement 함수
+
+리액트 컴포넌트 객체를 생성하여 반환하는 `ReactElement` 함수는 아래와 같이 구현되어 있습니다.  
+메타 정보만 객체에 담아서 반환하는 아주 간단한 함수라는 점을 알 수 있습니다.
+
+중요한 부분은 **`$$typeof` 속성을 통해서 해당 리액트 엘리먼트가 어떠한 타입인지 식별하고 있다는 점**입니다.
+
+```tsx {4} showLineNumbers
+const ReactElement = function (type, key, ref, self, source, owner, props) {
+  const element = {
+    // This tag allows us to uniquely identify this as a React Element
+    $$typeof: REACT_ELEMENT_TYPE,
+
+    // Built-in properties that belong on the element
+    type: type,
+    key: key,
+    ref: ref,
+    props: props,
+
+    // Record the component responsible for creating this element.
+    _owner: owner,
+  }
+}
+```
+
+### $$typeof 심볼
+
+`$$typeof` 에 들어갈 수 있는 값은 [ReactSymbol.js](https://github.com/facebook/react/blob/v18.2.0/packages/shared/ReactSymbols.js#L15) 파일에서 확인할 수 있습니다.
+
+일반 컴포넌트를 표현하는 `REACT_ELEMENT_TYPE` 와, forwardRef 로 래핑된 컴포넌트를 표현하는 `REACT_FORWARD_REF_TYPE` 가 존재하고 있다는 점을 확인할 수 있습니다.
+
+이 심볼은 리액트 엘리먼트를 이후 Fiber 노드로 변환할 때 엘리먼트마다 변환하는 동작에 차이를 주는 데 활용되기도 합니다.
+
+```tsx {2, 10} showLineNumbers
+// The Symbol used to tag the ReactElement-like types.
+export const REACT_ELEMENT_TYPE = Symbol.for('react.element')
+export const REACT_PORTAL_TYPE = Symbol.for('react.portal')
+export const REACT_FRAGMENT_TYPE = Symbol.for('react.fragment')
+export const REACT_STRICT_MODE_TYPE = Symbol.for('react.strict_mode')
+export const REACT_PROFILER_TYPE = Symbol.for('react.profiler')
+export const REACT_PROVIDER_TYPE = Symbol.for('react.provider')
+export const REACT_CONTEXT_TYPE = Symbol.for('react.context')
+export const REACT_SERVER_CONTEXT_TYPE = Symbol.for('react.server_context')
+export const REACT_FORWARD_REF_TYPE = Symbol.for('react.forward_ref')
+export const REACT_SUSPENSE_TYPE = Symbol.for('react.suspense')
+export const REACT_SUSPENSE_LIST_TYPE = Symbol.for('react.suspense_list')
+export const REACT_MEMO_TYPE = Symbol.for('react.memo')
+export const REACT_LAZY_TYPE = Symbol.for('react.lazy')
+export const REACT_SCOPE_TYPE = Symbol.for('react.scope')
+export const REACT_DEBUG_TRACING_MODE_TYPE = Symbol.for('react.debug_trace_mode')
+export const REACT_OFFSCREEN_TYPE = Symbol.for('react.offscreen')
+export const REACT_LEGACY_HIDDEN_TYPE = Symbol.for('react.legacy_hidden')
+export const REACT_CACHE_TYPE = Symbol.for('react.cache')
+export const REACT_TRACING_MARKER_TYPE = Symbol.for('react.tracing_marker')
+export const REACT_SERVER_CONTEXT_DEFAULT_VALUE_NOT_LOADED = Symbol.for('react.default_value')
+```
+
+### forwardRef 함수
+
+[forwardRef](https://github.com/facebook/react/blob/v18.2.0/packages/react/src/ReactForwardRef.js#L10) 함수의 구현 내용을 살펴보면 굉장히 단순합니다.
+
+`$$typeof` 프로퍼티의 값을 `REACT_FORWARD_REF_TYPE` 로 부여하고, 사용자가 컴포넌트를 정의하여 전달한 `render` 함수를 그대로 리액트 엘리먼트에 넣는 것이 전부입니다.
+
+그렇다면 `forwardRef` 함수가 거창한 역할을 수행하는 것이 아니라, 추후 **Fiber 노드를 생성할 때 forwardRef 함수에서 부여한 `REACT_FORWARD_REF_TYPE` 값과, `jsx` 함수가 부여한 `REACT_ELEMENT_TYPE` 값을 비교하여 동작의 차이를 만들어 낼 것**이라는 추측을 해볼 수 있습니다.
+
+```tsx showLineNumbers
+export function forwardRef<Props, ElementType: React$ElementType>(
+  render: (props: Props, ref: React$Ref<ElementType>) => React$Node,
+) {
+  const elementType = {
+    $$typeof: REACT_FORWARD_REF_TYPE,
+    render,
+  };
+
+  return elementType;
+}
+```
+
+## Fiber 생성
+
+`ReactElement` 는 바로 렌더링에 활용할 수 있는 요소는 아니기에, 리액트가 재조정 과정에서 활용할 수 있는 `Fiber` 노드로 변환되어야 합니다.
+
+### createFiber 함수
+
+[createFiber](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactFiber.new.js#L210) 함수는 전달받은 `WorkTag` 에 따라 `Fiber` 노드를 생성하는 함수입니다.
+
+리액트 엘리먼트를 생성하기 위한 `ReactElement` 함수가 있던 것과 유사하게, 파이버 노드를 생성하기 위한 `FiberNode` 생성자 함수도 존재하는 것입니다.
+
+```tsx showLineNumbers
+const createFiber = function (
+  tag: WorkTag,
+  pendingProps: mixed,
+  key: null | string,
+  mode: TypeOfMode
+): Fiber {
+  // $FlowFixMe: the shapes are exact here but Flow doesn't like constructors
+  return new FiberNode(tag, pendingProps, key, mode)
+}
+
+function FiberNode(tag: WorkTag, pendingProps: mixed, key: null | string, mode: TypeOfMode) {
+  // Instance
+  this.tag = tag
+  this.key = key
+  this.elementType = null
+  this.type = null
+  this.stateNode = null
+
+  // ... 생략
+}
+```
+
+그렇다면 `WorkTag` 는 어떤 값일지 궁금해지는데요, 우선 [ReactWorkTags.js](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactWorkTags.js#L38) 파일에서 어떤 종류가 존재하는지를 확인할 수 있습니다.
+
+확인해보면, ReactElement에 `$$typeof` 값이 다양했던 것과 유사하게 Fiber 노드에도 `tag` 값에 따라 다양한 타입의 노드를 관리하고 있다는 점을 알 수 있는데, 마찬가지로 일반 함수 컴포넌트 `FunctionComponent` 와, forwardRef로 래핑된 컴포넌트 `ForwardRef` 가 구분되어 태그되고 있다는 점을 확인할 수 있습니다.
+
+```tsx {1, 3, 12} showLineNumbers
+export const FunctionComponent = 0
+export const ClassComponent = 1
+export const IndeterminateComponent = 2 // Before we know whether it is function or class
+export const HostRoot = 3 // Root of a host tree. Could be nested inside another node.
+export const HostPortal = 4 // A subtree. Could be an entry point to a different renderer.
+export const HostComponent = 5
+export const HostText = 6
+export const Fragment = 7
+export const Mode = 8
+export const ContextConsumer = 9
+export const ContextProvider = 10
+export const ForwardRef = 11
+export const Profiler = 12
+export const SuspenseComponent = 13
+export const MemoComponent = 14
+export const SimpleMemoComponent = 15
+export const LazyComponent = 16
+export const IncompleteClassComponent = 17
+export const DehydratedFragment = 18
+export const SuspenseListComponent = 19
+export const ScopeComponent = 21
+export const OffscreenComponent = 22
+export const LegacyHiddenComponent = 23
+export const CacheComponent = 24
+export const TracingMarkerComponent = 25
+```
+
+### createFiberFromElement
+
+```tsx showLineNumbers
+export function createFiberFromElement(
+  element: ReactElement,
+  mode: TypeOfMode,
+  lanes: Lanes
+): Fiber {
+  let owner = null
+
+  const type = element.type
+  const key = element.key
+  const pendingProps = element.props
+  const fiber = createFiberFromTypeAndProps(type, key, pendingProps, owner, mode, lanes)
+
+  return fiber
+}
+```
+
+### createFiberFromTypeAndProps
+
+리액트 엘리먼트의 `$$typeof` 값에 따른 분기 처리 로직이 바로 여기에 존재하는 것입니다.
+
+본래 리액트 엘리먼트가 무엇이었는지에 따라, 앞으로 생성될 `Fiber` 노드의 `tag` 타입이 결정됩니다.
+
+그렇기 때문에 `forwardRef` 로 래핑된 컴포넌트와 일반 함수 컴포넌트가 렌더링되는 과정에서 차이가 발생하는 것이었습니다.
+
+```tsx {} showLineNumbers
+export function createFiberFromTypeAndProps(
+  type: any, // React$ElementType
+  key: null | string,
+  pendingProps: any,
+  owner: null | Fiber,
+  mode: TypeOfMode,
+  lanes: Lanes
+): Fiber {
+  let fiberTag = IndeterminateComponent
+
+  let resolvedType = type
+  if (typeof type === 'function') {
+    if (shouldConstruct(type)) {
+      fiberTag = ClassComponent
+    }
+  } else if (typeof type === 'string') {
+    fiberTag = HostComponent
+  } else {
+    getTag: switch (type) {
+      default: {
+        if (typeof type === 'object' && type !== null) {
+          switch (type.$$typeof) {
+            case REACT_PROVIDER_TYPE:
+              fiberTag = ContextProvider
+              break getTag
+            case REACT_CONTEXT_TYPE:
+              // This is a consumer
+              fiberTag = ContextConsumer
+              break getTag
+            case REACT_FORWARD_REF_TYPE:
+              fiberTag = ForwardRef
+              break getTag
+            case REACT_MEMO_TYPE:
+              fiberTag = MemoComponent
+              break getTag
+            case REACT_LAZY_TYPE:
+              fiberTag = LazyComponent
+              resolvedType = null
+              break getTag
+          }
+        }
+        let info = ''
+
+        throw new Error(
+          'Element type is invalid: expected a string (for built-in ' +
+            'components) or a class/function (for composite components) ' +
+            `but got: ${type == null ? type : typeof type}.${info}`
+        )
+      }
+    }
+  }
+
+  const fiber = createFiber(fiberTag, pendingProps, key, mode)
+  fiber.elementType = type
+  fiber.type = resolvedType
+  fiber.lanes = lanes
+
+  return fiber
+}
+```
+
+### ReactChildFiber
+
+`Fiber` 노드를 생성하거나 업데이트하는 로직은 [ReactChildFiber](https://github.com/facebook/react/blob/v18.2.0/packages/react-reconciler/src/ReactChildFiber.new.js#L265) 에 정의되어 있는데, 상세 구현은 내용이 너무 많아서 함수 시그니처만 모아보면 아래와 같습니다.
+
+인자로 받는 `shouldTrackSideEffects` 의 값으로 `Fiber` 노드를 생성할 때 사이드 이펙트를 추적할지 여부를 결정합니다.
+
+(마운트 시에는 부수효과를 추적할 필요가 없기 때문에 `mountChildFibers` 를 사용하고, 업데이트 시에는 부수효과를 추적해야 하기 때문에 `reconcileChildFibers` 를 사용)
+
+```tsx showLineNumbers
+// This wrapper function exists because I expect to clone the code in each path
+// to be able to optimize each path individually by branching early. This needs
+// a compiler or we can do it manually. Helpers that don't need this branching
+// live outside of this function.
+function ChildReconciler(shouldTrackSideEffects) {
+  function deleteChild(returnFiber: Fiber, childToDelete: Fiber): void {}
+
+  function deleteRemainingChildren(returnFiber: Fiber, currentFirstChild: Fiber | null): null {}
+
+  function mapRemainingChildren(
+    returnFiber: Fiber,
+    currentFirstChild: Fiber
+  ): Map<string | number, Fiber> {}
+
+  function useFiber(fiber: Fiber, pendingProps: mixed): Fiber {}
+
+  function placeChild(newFiber: Fiber, lastPlacedIndex: number, newIndex: number): number {}
+
+  function placeSingleChild(newFiber: Fiber): Fiber {}
+
+  function updateTextNode(
+    returnFiber: Fiber,
+    current: Fiber | null,
+    textContent: string,
+    lanes: Lanes
+  ) {}
+
+  function updateElement(
+    returnFiber: Fiber,
+    current: Fiber | null,
+    element: ReactElement,
+    lanes: Lanes
+  ): Fiber {}
+
+  function updatePortal(
+    returnFiber: Fiber,
+    current: Fiber | null,
+    portal: ReactPortal,
+    lanes: Lanes
+  ): Fiber {}
+
+  function updateFragment(
+    returnFiber: Fiber,
+    current: Fiber | null,
+    fragment: Iterable<*>,
+    lanes: Lanes,
+    key: null | string
+  ): Fiber {}
+
+  function createChild(returnFiber: Fiber, newChild: any, lanes: Lanes): Fiber | null {}
+
+  function updateSlot(
+    returnFiber: Fiber,
+    oldFiber: Fiber | null,
+    newChild: any,
+    lanes: Lanes
+  ): Fiber | null {}
+
+  function updateFromMap(
+    existingChildren: Map<string | number, Fiber>,
+    returnFiber: Fiber,
+    newIdx: number,
+    newChild: any,
+    lanes: Lanes
+  ): Fiber | null {}
+
+  function warnOnInvalidKey(
+    child: mixed,
+    knownKeys: Set<string> | null,
+    returnFiber: Fiber
+  ): Set<string> | null {}
+
+  function reconcileChildrenArray(
+    returnFiber: Fiber,
+    currentFirstChild: Fiber | null,
+    newChildren: Array<*>,
+    lanes: Lanes
+  ): Fiber | null {}
+
+  function reconcileChildrenIterator(
+    returnFiber: Fiber,
+    currentFirstChild: Fiber | null,
+    newChildrenIterable: Iterable<*>,
+    lanes: Lanes
+  ): Fiber | null {}
+
+  function reconcileSingleTextNode(
+    returnFiber: Fiber,
+    currentFirstChild: Fiber | null,
+    textContent: string,
+    lanes: Lanes
+  ): Fiber {}
+
+  function reconcileSingleElement(
+    returnFiber: Fiber,
+    currentFirstChild: Fiber | null,
+    element: ReactElement,
+    lanes: Lanes
+  ): Fiber {}
+
+  function reconcileSinglePortal(
+    returnFiber: Fiber,
+    currentFirstChild: Fiber | null,
+    portal: ReactPortal,
+    lanes: Lanes
+  ): Fiber {}
+
+  function reconcileChildFibers(
+    returnFiber: Fiber,
+    currentFirstChild: Fiber | null,
+    newChild: any,
+    lanes: Lanes
+  ): Fiber | null {}
+
+  return reconcileChildFibers
+}
+
+export const reconcileChildFibers = ChildReconciler(true)
+export const mountChildFibers = ChildReconciler(false)
+```
+
+작성중...
+
+## References
+
+[How forwardRef() works internally in React?](https://jser.dev/2023-07-28-how-forwardref-works-internally)  
+[How does useRef() work?](https://jser.dev/react/2021/12/05/how-does-useRef-work)  
+[React 톺아보기 - 05. Reconciler_3](https://goidle.github.io/react/in-depth-react-reconciler_3/)
